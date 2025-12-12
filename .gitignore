@@ -1,11 +1,43 @@
+# Dependencies
 node_modules/
+package-lock.json
+
+# Environment variables
 .env
-.DS_Store
+.env.local
+.env.production
+
+# Build outputs
 dist/
 build/
 *.log
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-.cache/
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MongoDB
+data/
+
+# AWS
+.aws/
+
+# Blockchain
+*.key
+*.pem

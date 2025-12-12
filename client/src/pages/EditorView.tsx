@@ -21,7 +21,7 @@ const EditorView = () => {
 
   const initializeEditor = async () => {
     try {
-      const token = getToken()
+      const token = getToken() || 'mock-token'
       const response = await axios.get(`${API_URL}/files/${fileId}/editor-config`, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -36,18 +36,18 @@ const EditorView = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
         <div className="text-white text-xl">Loading editor...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="bg-white shadow-sm border-b p-4">
+    <div className="min-h-screen">
+      <div className="bg-white/10 backdrop-blur-xl border-b border-white/20 p-4">
         <button
           onClick={() => navigate('/files')}
-          className="flex items-center gap-2 text-gray-700 hover:text-gray-900"
+          className="flex items-center gap-2 text-white hover:text-blue-400 transition-colors"
         >
           <FaArrowLeft /> Back to Files
         </button>
@@ -61,7 +61,7 @@ const EditorView = () => {
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="text-gray-600">Editor configuration not available</div>
+            <div className="text-white">Editor configuration not available</div>
           </div>
         )}
       </div>

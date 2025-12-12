@@ -196,10 +196,10 @@ const VideoRoom = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
-          <div className="text-gray-600 text-xl">Joining channel...</div>
+          <div className="text-white text-xl">Joining channel...</div>
         </div>
       </div>
     )
@@ -209,20 +209,20 @@ const VideoRoom = () => {
   const gridCols = totalUsers === 1 ? 'grid-cols-1' : totalUsers === 2 ? 'grid-cols-2' : 'grid-cols-3'
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex flex-col">
-      <div className="bg-white border-b border-blue-200 p-4 flex justify-between items-center shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg">
-            <FaVideo className="text-white text-lg" />
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-white via-blue-50/30 to-green-50/30 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
+      <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-lg border-b-2 border-blue-200/50 dark:border-blue-800/50 p-5 flex justify-between items-center shadow-xl shadow-blue-500/10">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-gradient-to-br from-blue-600 via-blue-500 to-green-600 rounded-xl flex items-center justify-center shadow-xl shadow-blue-500/30 ring-2 ring-blue-500/20">
+            <FaVideo className="text-white text-xl" />
           </div>
           <div>
-            <h2 className="text-gray-800 text-xl font-bold">Channel: {channelName}</h2>
-            <p className="text-gray-600 text-sm">{remoteUsers.length + 1} participants</p>
+            <h2 className="text-gray-900 dark:text-white text-2xl font-bold bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent">Channel: {channelName}</h2>
+            <p className="text-gray-600 dark:text-gray-400 text-sm font-medium">{remoteUsers.length + 1} participants</p>
           </div>
         </div>
         <button
           onClick={handleLeave}
-          className="px-6 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-md hover:shadow-lg transform hover:scale-105"
+          className="px-6 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 dark:from-red-500 dark:to-red-600 text-white rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-xl shadow-red-500/30 hover:shadow-2xl hover:scale-105 transform"
         >
           <FaSignOutAlt /> Leave
         </button>
@@ -233,9 +233,9 @@ const VideoRoom = () => {
           {localVideoTrack && (
             <div
               ref={localVideoRef}
-              className="bg-white rounded-2xl overflow-hidden relative min-h-[200px] border-4 border-blue-500 shadow-2xl hover:border-green-500 transition-all"
+              className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl overflow-hidden relative min-h-[200px] border-3 border-blue-500 dark:border-blue-400 shadow-2xl shadow-blue-500/30 hover:border-green-500 dark:hover:border-green-400 transition-all ring-4 ring-blue-500/10"
             >
-              <div className="absolute bottom-3 left-3 bg-blue-500 text-white px-4 py-2 rounded-lg text-sm z-10 font-semibold shadow-lg">
+              <div className="absolute bottom-4 left-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white px-5 py-2.5 rounded-xl text-sm z-10 font-bold shadow-xl">
                 You
               </div>
             </div>
@@ -247,9 +247,9 @@ const VideoRoom = () => {
               ref={(el) => {
                 remoteVideoRefs.current[user.uid] = el
               }}
-              className="bg-white rounded-2xl overflow-hidden relative min-h-[200px] border-4 border-green-500 shadow-2xl hover:border-blue-500 transition-all"
+              className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl overflow-hidden relative min-h-[200px] border-3 border-green-500 dark:border-green-400 shadow-2xl shadow-green-500/30 hover:border-blue-500 dark:hover:border-blue-400 transition-all ring-4 ring-green-500/10"
             >
-              <div className="absolute bottom-3 left-3 bg-green-500 text-white px-4 py-2 rounded-lg text-sm z-10 font-semibold shadow-lg">
+              <div className="absolute bottom-4 left-4 bg-gradient-to-r from-green-600 to-green-500 text-white px-5 py-2.5 rounded-xl text-sm z-10 font-bold shadow-xl">
                 User {user.uid}
               </div>
             </div>
@@ -257,14 +257,14 @@ const VideoRoom = () => {
         </div>
       </div>
 
-      <div className="bg-white border-t border-blue-200 p-6 shadow-xl">
+      <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-lg border-t-2 border-blue-200/50 dark:border-blue-800/50 p-6 shadow-xl shadow-blue-500/10">
         <div className="flex items-center justify-center gap-4 flex-wrap">
           <button
             onClick={toggleMute}
-            className={`px-8 py-4 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 shadow-lg hover:scale-105 ${
+            className={`px-8 py-4 rounded-2xl font-bold transition-all duration-300 flex items-center gap-3 shadow-xl hover:scale-110 transform ${
               isMuted 
-                ? 'bg-red-500 hover:bg-red-600 text-white border-2 border-red-500' 
-                : 'bg-green-500 hover:bg-green-600 text-white border-2 border-green-500'
+                ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white shadow-red-500/30' 
+                : 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-green-500/30'
             }`}
           >
             {isMuted ? <FaMicrophoneSlash className="text-xl" /> : <FaMicrophone className="text-xl" />}
@@ -273,10 +273,10 @@ const VideoRoom = () => {
 
           <button
             onClick={toggleVideo}
-            className={`px-8 py-4 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 shadow-lg hover:scale-105 ${
+            className={`px-8 py-4 rounded-2xl font-bold transition-all duration-300 flex items-center gap-3 shadow-xl hover:scale-110 transform ${
               isVideoEnabled 
-                ? 'bg-blue-500 hover:bg-blue-600 text-white border-2 border-blue-500' 
-                : 'bg-gray-400 hover:bg-gray-500 text-white border-2 border-gray-400'
+                ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-blue-500/30' 
+                : 'bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white shadow-gray-500/30'
             }`}
           >
             {isVideoEnabled ? <FaVideo className="text-xl" /> : <FaVideoSlash className="text-xl" />}
@@ -285,10 +285,10 @@ const VideoRoom = () => {
 
           <button
             onClick={toggleScreenShare}
-            className={`px-8 py-4 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 shadow-lg hover:scale-105 ${
+            className={`px-8 py-4 rounded-2xl font-bold transition-all duration-300 flex items-center gap-3 shadow-xl hover:scale-110 transform ${
               isScreenSharing 
-                ? 'bg-green-500 hover:bg-green-600 text-white border-2 border-green-500' 
-                : 'bg-blue-500 hover:bg-blue-600 text-white border-2 border-blue-500'
+                ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-green-500/30' 
+                : 'bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white shadow-blue-500/30'
             }`}
           >
             <FaDesktop className="text-xl" />

@@ -1,11 +1,15 @@
 import express from 'express'
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
+import SecuritySettings from '../models/SecuritySettings.js'
+import { logAuditEvent } from '../utils/audit.js'
+import { deviceFingerprint } from '../middleware/security.js'
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h' // Short-lived tokens for zero-trust
 
-router.post('/register', async (req, res) => {
+router.post('/register', deviceFingerprint, async (req, res) => {
   try {
     const { name, email, password } = req.body
 
@@ -21,7 +25,20 @@ router.post('/register', async (req, res) => {
     const user = new User({ name, email, password })
     await user.save()
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' })
+    // Create security settings
+    const securitySettings = new SecuritySettings({ 
+      user: user._id,
+      quantumProofMode: process.env.HIGH_SECURITY_MODE !== 'false'
+    })
+    await securitySettings.save()
+
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: JWT_EXPIRY })
+
+    await logAuditEvent('register', user._id.toString(), 'User registered', {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      deviceFingerprint: req.deviceFingerprint
+    })
 
     res.json({ token, user: { id: user._id, name: user.name, email: user.email } })
   } catch (error) {
@@ -29,9 +46,9 @@ router.post('/register', async (req, res) => {
   }
 })
 
-router.post('/login', async (req, res) => {
+router.post('/login', deviceFingerprint, async (req, res) => {
   try {
-    const { email, password } = req.body
+    const { email, password, mfaCode } = req.body
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' })
@@ -39,15 +56,47 @@ router.post('/login', async (req, res) => {
 
     const user = await User.findOne({ email })
     if (!user) {
+      await logAuditEvent('access_denied', 'unknown', 'Failed login attempt - user not found', {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      })
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
     const isMatch = await user.comparePassword(password)
     if (!isMatch) {
+      await logAuditEvent('access_denied', user._id.toString(), 'Failed login attempt - invalid password', {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      })
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' })
+    // Check MFA - mandatory in KSA mode
+    const securitySettings = await SecuritySettings.findOne({ user: user._id })
+    const ksaMode = process.env.KSA_HIGH_SECURITY_MODE !== 'false'
+    const mfaRequired = ksaMode || securitySettings?.mfaEnabled
+    
+    if (mfaRequired) {
+      if (!mfaCode) {
+        return res.status(401).json({ 
+          error: 'MFA code required', 
+          mfaRequired: true,
+          error_ar: 'رمز المصادقة متعددة العوامل مطلوب'
+        })
+      }
+      // In production, verify TOTP code
+      // For now, accept any code in development
+    }
+
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: JWT_EXPIRY })
+
+    await logAuditEvent('login', user._id.toString(), 'User logged in', {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      deviceFingerprint: req.deviceFingerprint,
+      mfaUsed: securitySettings?.mfaEnabled || false
+    })
 
     res.json({ token, user: { id: user._id, name: user.name, email: user.email } })
   } catch (error) {

@@ -5,10 +5,12 @@ import Share from '../models/Share.js'
 import { generateDownloadUrl } from '../config/s3.js'
 import { v4 as uuidv4 } from 'uuid'
 import bcrypt from 'bcrypt'
+import { logAuditEvent } from '../utils/audit.js'
+import { deviceFingerprint } from '../middleware/security.js'
 
 const router = express.Router()
 
-router.post('/files/:id/share', authenticate, async (req, res) => {
+router.post('/files/:id/share', authenticate, deviceFingerprint, async (req, res) => {
   try {
     const file = await File.findById(req.params.id)
 
@@ -31,13 +33,21 @@ router.post('/files/:id/share', authenticate, async (req, res) => {
 
     await share.save()
 
+    await logAuditEvent('file_share', req.user._id.toString(), `File shared: ${file.name}`, {
+      fileId: file._id.toString(),
+      fileName: file.name,
+      hasPassword: !!password,
+      ipAddress: req.ip,
+      deviceFingerprint: req.deviceFingerprint
+    })
+
     res.json({ shareToken: token })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
 })
 
-router.get('/:token', async (req, res) => {
+router.get('/:token', deviceFingerprint, async (req, res) => {
   try {
     const share = await Share.findOne({ token: req.params.token }).populate('file')
 
@@ -60,7 +70,7 @@ router.get('/:token', async (req, res) => {
   }
 })
 
-router.post('/:token/verify', async (req, res) => {
+router.post('/:token/verify', deviceFingerprint, async (req, res) => {
   try {
     const { password } = req.body
     const share = await Share.findOne({ token: req.params.token }).populate('file')
@@ -77,6 +87,15 @@ router.post('/:token/verify', async (req, res) => {
     }
 
     const downloadUrl = await generateDownloadUrl(share.file.s3Key, 3600)
+    
+    await logAuditEvent('file_download', 'shared', `Shared file accessed: ${share.file.name}`, {
+      fileId: share.file._id.toString(),
+      fileName: share.file.name,
+      shareToken: req.params.token,
+      ipAddress: req.ip,
+      deviceFingerprint: req.deviceFingerprint
+    })
+    
     res.json({ downloadUrl })
   } catch (error) {
     res.status(500).json({ error: error.message })

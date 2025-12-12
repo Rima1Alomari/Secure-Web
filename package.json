@@ -1,6 +1,7 @@
 {
-  "name": "secure-web-unified",
-  "version": "1.0.0",
+  "name": "secure-web",
+  "version": "2.0.0",
+  "description": "Unified secure collaboration platform with quantum-resistant encryption, AI threat detection, and zero-trust architecture",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
@@ -8,10 +9,16 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "cd server && NODE_ENV=production npm start",
+    "test": "jest",
+    "test:security": "jest --testPathPattern=security",
     "install-all": "npm install && cd server && npm install && cd ../client && npm install"
   },
+  "keywords": ["cybersecurity", "video-conferencing", "file-sharing", "quantum-encryption", "zero-trust"],
+  "author": "",
+  "license": "MIT",
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.11"
   }
 }
-

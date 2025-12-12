@@ -21,7 +21,19 @@ const fileSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
-  }
+  },
+  fileHash: String,
+  threats: [{
+    type: { type: String },
+    severity: String,
+    message: String
+  }],
+  dlpFindings: [{
+    type: { type: String },
+    category: String,
+    severity: String,
+    message: String
+  }]
 }, {
   timestamps: true
 })

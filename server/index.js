@@ -1,6 +1,8 @@
 import express from 'express'
 import mongoose from 'mongoose'
 import cors from 'cors'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import dotenv from 'dotenv'
@@ -10,8 +12,20 @@ import authRoutes from './routes/auth.js'
 import agoraRoutes from './routes/agora.js'
 import fileRoutes from './routes/files.js'
 import shareRoutes from './routes/share.js'
+import securityRoutes from './routes/security.js'
+import auditRoutes from './routes/audit.js'
+import dataRightsRoutes from './routes/dataRights.js'
+import aiRoutes from './routes/ai.js'
+import { initializeSecurityMiddleware } from './middleware/security.js'
 
 dotenv.config()
+
+// Log environment status
+console.log('🔧 Environment Configuration:')
+console.log(`   - NODE_ENV: ${process.env.NODE_ENV || 'development'}`)
+console.log(`   - PORT: ${process.env.PORT || 5000}`)
+console.log(`   - OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '✅ Set' : '❌ Missing'}`)
+console.log(`   - MONGODB_URI: ${process.env.MONGODB_URI ? '✅ Set' : '⚠️ Using default'}`)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -20,17 +34,75 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5000',
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST']
   }
 })
 
 const PORT = process.env.PORT || 5000
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/secureweb'
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cybrany'
 
-// Middleware
-app.use(cors())
-app.use(express.json())
+// Security Middleware - Relaxed for development
+app.use(helmet({
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"]
+    }
+  } : false, // Disable CSP in development
+  crossOriginEmbedderPolicy: false
+}))
+
+// Rate Limiting - More lenient for development, skip for AI routes
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // Higher limit in development
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for AI routes in development
+    return req.path.startsWith('/api/ai') && process.env.NODE_ENV === 'development'
+  }
+})
+app.use('/api/', limiter)
+
+// CORS with strict origins - More permissive in development
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [process.env.CLIENT_URL || 'http://localhost:3000']
+app.use(cors({
+  origin: (origin, callback) => {
+    // In development, allow all origins
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true)
+    }
+    // In production, check allowed origins
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`)
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}))
+
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+// Add request logging for debugging
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/ai')) {
+    console.log(`📥 ${req.method} ${req.path} from ${req.ip}`)
+  }
+  next()
+})
+
+// Initialize Security Middleware (after body parsing, before routes)
+initializeSecurityMiddleware(app)
 
 // MongoDB connection
 mongoose
@@ -60,16 +132,25 @@ io.on('connection', (socket) => {
 // Make io available to routes
 app.set('io', io)
 
-// API Routes
+// API Routes - AI routes first to avoid security middleware conflicts
+// Add a bypass middleware specifically for AI routes
+app.use('/api/ai', (req, res, next) => {
+  // Log the request
+  console.log(`🤖 AI Route: ${req.method} ${req.path} from ${req.ip || req.connection.remoteAddress}`)
+  // Skip all security checks for AI routes in development
+  next()
+})
+app.use('/api/ai', aiRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/agora', agoraRoutes)
 app.use('/api/files', fileRoutes)
 app.use('/api/share', shareRoutes)
+app.use('/api/security', securityRoutes)
+app.use('/api/audit', auditRoutes)
+app.use('/api/data-rights', dataRightsRoutes)
 
 // Serve static files from React app in development (proxy to Vite dev server)
 if (process.env.NODE_ENV === 'development') {
-  // In development, we'll proxy to Vite dev server
-  // But we can also serve the built files if needed
   app.get('/', (req, res) => {
     res.redirect('http://localhost:3000')
   })
@@ -85,5 +166,5 @@ if (process.env.NODE_ENV === 'development') {
 
 httpServer.listen(PORT, () => {
   console.log(`Secure Web server running on port ${PORT}`)
+  console.log(`High Security Mode: ${process.env.HIGH_SECURITY_MODE || 'enabled'}`)
 })
-

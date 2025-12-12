@@ -1,14 +1,18 @@
-const TOKEN_KEY = 'secure_web_token'
-
-export const setToken = (token: string) => {
-  localStorage.setItem(TOKEN_KEY, token)
-}
+// Temporary: Always return a mock token for testing
+// Remove this and uncomment real auth when ready
 
 export const getToken = (): string | null => {
-  return localStorage.getItem(TOKEN_KEY)
+  // Temporarily return a mock token for testing
+  return 'mock-token-for-testing'
+  
+  // Real implementation (commented for now):
+  // return localStorage.getItem('token')
 }
 
-export const removeToken = () => {
-  localStorage.removeItem(TOKEN_KEY)
+export const setToken = (token: string): void => {
+  localStorage.setItem('token', token)
 }
 
+export const removeToken = (): void => {
+  localStorage.removeItem('token')
+}
