@@ -13,6 +13,7 @@ import Calendar from './pages/Calendar'
 import Recent from './pages/Recent'
 import TrashBin from './pages/TrashBin'
 import Administration from './pages/Administration'
+import AboutUs from './pages/AboutUs'
 import Layout from './components/Layout'
 
 function App() {
@@ -44,6 +45,7 @@ function App() {
               <Route path="/recent" element={<Recent />} />
               <Route path="/trash" element={<TrashBin />} />
               <Route path="/administration" element={<Administration />} />
+              <Route path="/about" element={<AboutUs />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </Layout>

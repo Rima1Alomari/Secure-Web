@@ -33,12 +33,6 @@ export default function SecurityCenter() {
   const [alerts, setAlerts] = useState<ThreatAlert[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
-  const [compliance, setCompliance] = useState({
-    gdpr: 95,
-    pdpl: 0,
-    sama: 0
-  })
-  const [ksaCompliance, setKsaCompliance] = useState<any>(null)
 
   useEffect(() => {
     loadSecurityData()
@@ -47,28 +41,17 @@ export default function SecurityCenter() {
   const loadSecurityData = async () => {
     try {
       const token = getToken() || 'mock-token'
-      const [settingsRes, alertsRes, ksaRes] = await Promise.all([
+      const [settingsRes, alertsRes] = await Promise.all([
         axios.get('/api/security/settings', {
           headers: { Authorization: `Bearer ${token}` }
         }),
         axios.get('/api/audit/logs?eventType=threat_detected&limit=10', {
           headers: { Authorization: `Bearer ${token}` }
-        }),
-        axios.get('/api/security/ksa-compliance', {
-          headers: { Authorization: `Bearer ${token}` }
-        }).catch(() => null)
+        })
       ])
 
       setSettings(settingsRes.data)
       setAlerts(alertsRes.data.logs?.slice(0, 10) || [])
-      if (ksaRes?.data) {
-        setKsaCompliance(ksaRes.data)
-        setCompliance(prev => ({
-          ...prev,
-          pdpl: ksaRes.data.pdpl.compliant ? 100 : 0,
-          sama: ksaRes.data.sama.compliant ? 100 : 0
-        }))
-      }
     } catch (error) {
       console.error('Error loading security data:', error)
     } finally {
@@ -249,42 +232,6 @@ export default function SecurityCenter() {
                 {settings?.mfaEnabled ? 'Manage MFA' : 'Enable MFA'}
               </button>
           </div>
-        </div>
-
-            {/* Compliance Overview */}
-            <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl p-6 border-2 border-blue-200/50 dark:border-blue-800/50 shadow-xl shadow-blue-500/10 mb-6">
-          <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent mb-6">Compliance Overview</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {Object.entries(compliance).map(([standard, score]) => (
-              <div key={standard} className="bg-gradient-to-br from-blue-50 to-green-50 dark:from-gray-700 dark:to-gray-700 rounded-xl p-5 border-2 border-blue-200/50 dark:border-blue-800/50 shadow-lg">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-gray-900 dark:text-white font-bold uppercase text-sm">{standard}</span>
-                  <span className="text-green-600 dark:text-green-400 font-bold text-lg">{score}%</span>
-                </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-3 shadow-inner">
-                  <div
-                    className="bg-gradient-to-r from-blue-600 via-blue-500 to-green-600 dark:from-blue-500 dark:via-blue-400 dark:to-green-500 h-3 rounded-full shadow-lg"
-                    style={{ width: `${score}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          {ksaCompliance && (
-            <div className="mt-6 pt-6 border-t border-blue-200/50 dark:border-blue-800/50">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3">KSA Compliance Score: {ksaCompliance.overallScore}%</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-blue-500/10 rounded-xl p-4 border border-blue-200/50 dark:border-blue-800/50 shadow-md">
-                  <p className="text-blue-600 dark:text-blue-400 font-bold text-lg">PDPL: {ksaCompliance.pdpl.compliant ? '100%' : '0%'}</p>
-                  <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">Personal Data Protection Law</p>
-                </div>
-                <div className="bg-purple-500/10 rounded-xl p-4 border border-purple-200/50 dark:border-purple-800/50 shadow-md">
-                  <p className="text-purple-600 dark:text-purple-400 font-bold text-lg">SAMA: {ksaCompliance.sama.compliant ? '100%' : '0%'}</p>
-                  <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">SAMA Cyber Security Framework</p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Action Buttons */}

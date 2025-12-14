@@ -3,27 +3,28 @@ import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import axios from 'axios'
 import { getToken } from '../utils/auth'
-import { FaArrowLeft, FaDownload, FaShare, FaEdit, FaTrash, FaRobot, FaSearch, FaTags, FaFileAudio } from 'react-icons/fa'
+import { FaArrowLeft, FaDownload, FaShare, FaEdit, FaTrash, FaRobot, FaSearch, FaTags, FaFileAudio, FaFile } from 'react-icons/fa'
 import { io } from 'socket.io-client'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
-interface File {
+interface FileItem {
   _id: string
   name: string
   size: number
   type: string
-  uploadedAt: string
+  uploadedAt?: string
+  createdAt?: string
   owner: string
 }
 
 const FileManager = () => {
-  const [files, setFiles] = useState<File[]>([])
+  const [files, setFiles] = useState<FileItem[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const [shareModal, setShareModal] = useState<{ file: File | null; shareLink: string }>({ file: null, shareLink: '' })
+  const [shareModal, setShareModal] = useState<{ file: FileItem | null; shareLink: string }>({ file: null, shareLink: '' })
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -71,13 +72,13 @@ const FileManager = () => {
     }
   }
 
-  const onDrop = async (acceptedFiles: File[]) => {
+  const onDrop = async (acceptedFiles: globalThis.File[]) => {
     for (const file of acceptedFiles) {
       await uploadFile(file)
     }
   }
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = async (file: globalThis.File) => {
     try {
       setUploading(true)
       setProgress(0)
@@ -127,7 +128,7 @@ const FileManager = () => {
     disabled: uploading
   })
 
-  const handleDownload = async (file: File) => {
+  const handleDownload = async (file: FileItem) => {
     try {
       const token = getToken() || 'mock-token'
       const response = await axios.get(`${API_URL}/files/${file._id}/download-url`, {
@@ -142,7 +143,7 @@ const FileManager = () => {
     }
   }
 
-  const handleShare = async (file: File) => {
+  const handleShare = async (file: FileItem) => {
     try {
       const token = getToken() || 'mock-token'
       const response = await axios.post(
@@ -175,12 +176,12 @@ const FileManager = () => {
     }
   }
 
-  const handleEdit = (file: File) => {
+  const handleEdit = (file: FileItem) => {
     // Temporarily disabled auth check
     navigate(`/editor/${file._id}`)
   }
 
-  const canEdit = (file: File) => {
+  const canEdit = (file: FileItem) => {
     const officeTypes = [
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -320,7 +321,7 @@ const FileManager = () => {
                       {formatSize(file.size)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
-                      {new Date(file.uploadedAt).toLocaleDateString()}
+                      {new Date(file.createdAt || file.uploadedAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex gap-3">

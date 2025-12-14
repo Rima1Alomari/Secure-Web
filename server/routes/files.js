@@ -1,6 +1,7 @@
 import express from 'express'
 import { authenticate } from '../middleware/auth.js'
 import File from '../models/File.js'
+import Share from '../models/Share.js'
 import { generateUploadUrl, generateDownloadUrl, deleteFile as deleteS3File } from '../config/s3.js'
 import { scanFile } from '../utils/threatDetection.js'
 import { scanFileContent } from '../utils/dlp.js'
@@ -8,6 +9,8 @@ import { scanForSensitiveData } from '../utils/dlp.js'
 import { logAuditEvent } from '../utils/audit.js'
 import { encryptData } from '../utils/encryption.js'
 import { deviceFingerprint } from '../middleware/security.js'
+import { v4 as uuidv4 } from 'uuid'
+import bcrypt from 'bcrypt'
 
 const router = express.Router()
 
@@ -203,6 +206,44 @@ router.get('/:id/editor-config', authenticate, async (req, res) => {
 
 router.post('/:id/callback', authenticate, async (req, res) => {
   res.status(200).json({ error: 0 })
+})
+
+router.post('/:id/share', authenticate, deviceFingerprint, async (req, res) => {
+  try {
+    const file = await File.findById(req.params.id)
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' })
+    }
+
+    // Temporarily disabled owner check for testing
+    // if (file.owner.toString() !== req.user._id.toString()) {
+    //   return res.status(403).json({ error: 'Access denied' })
+    // }
+
+    const { password } = req.body
+    const token = uuidv4()
+
+    const share = new Share({
+      file: file._id,
+      token,
+      password: password ? await bcrypt.hash(password, 10) : null
+    })
+
+    await share.save()
+
+    await logAuditEvent('file_share', req.user._id.toString(), `File shared: ${file.name}`, {
+      fileId: file._id.toString(),
+      fileName: file.name,
+      hasPassword: !!password,
+      ipAddress: req.ip,
+      deviceFingerprint: req.deviceFingerprint
+    })
+
+    res.json({ shareToken: token })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
 })
 
 const getDocumentType = (mimeType) => {

@@ -12,7 +12,8 @@ import {
   FaClock,
   FaTrash,
   FaCog,
-  FaUsers
+  FaUsers,
+  FaInfoCircle
 } from 'react-icons/fa'
 import { removeToken } from '../utils/auth'
 import ThemeToggle from './ThemeToggle'
@@ -47,6 +48,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/trash', icon: FaTrash, label: 'Trash' },
     { path: '/security', icon: FaShieldAlt, label: 'Security' },
     { path: '/administration', icon: FaCog, label: 'Admin' },
+    { path: '/about', icon: FaInfoCircle, label: 'About' },
   ]
 
   return (
