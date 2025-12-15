@@ -180,3 +180,4 @@ export default function SearchResultsModal({ isOpen, onClose, searchQuery }: Sea
   )
 }
 
+

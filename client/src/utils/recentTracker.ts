@@ -74,3 +74,4 @@ export function trackMeetingOpened(eventId: string, eventTitle: string, userId?:
   setJSON(RECENT_OPENED_KEY, updated)
 }
 
+
