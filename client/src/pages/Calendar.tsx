@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react'
-import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaCheckCircle } from 'react-icons/fa'
-import { FiAlertTriangle } from 'react-icons/fi'
-import { Modal, Toast } from '../components/common'
+import { useState, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
+import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo } from 'react-icons/fa'
+import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { EVENTS_KEY } from '../data/keys'
 import { EventItem } from '../types/models'
+import { useUser } from '../contexts/UserContext'
+import { trackMeetingOpened } from '../utils/recentTracker'
+
+type ViewMode = 'month' | 'week' | 'day'
 
 interface Event extends EventItem {
   from?: string
@@ -14,14 +18,17 @@ interface Event extends EventItem {
 }
 
 const Calendar = () => {
+  const location = useLocation()
+  const { role, user } = useUser()
+  const isAdmin = role === 'admin'
+  
+  const [viewMode, setViewMode] = useState<ViewMode>('month')
+  const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [events, setEvents] = useState<Event[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEventDetailsModal, setShowEventDetailsModal] = useState(false)
-  const [showSmartSchedulingModal, setShowSmartSchedulingModal] = useState(false)
-  const [showConflictModal, setShowConflictModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
-  const [clickedDate, setClickedDate] = useState<Date | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
   
   const [newEvent, setNewEvent] = useState({
@@ -38,18 +45,39 @@ const Calendar = () => {
   // Load events from localStorage
   useEffect(() => {
     const savedEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
-    // Convert date strings back to Date objects for display
     const eventsWithDates = savedEvents.map(e => ({
       ...e,
       date: typeof e.date === 'string' ? new Date(e.date) : e.date
     }))
     setEvents(eventsWithDates)
-  }, [])
+    
+    // Handle focusEventId from Dashboard navigation
+    const focusEventId = (location.state as any)?.focusEventId
+    if (focusEventId) {
+      const eventToFocus = eventsWithDates.find(e => e.id === focusEventId)
+      if (eventToFocus) {
+        setSelectedDate(new Date(eventToFocus.date))
+        setCurrentDate(new Date(eventToFocus.date))
+        setSelectedEvent(eventToFocus)
+        setShowEventDetailsModal(true)
+      }
+    }
+    
+    // Handle roomId from RoomDetails navigation
+    const roomId = (location.state as any)?.roomId
+    if (roomId && isAdmin) {
+      setNewEvent({
+        ...newEvent,
+        description: `Room: ${roomId}\n${newEvent.description || ''}`.trim()
+      })
+      ;(newEvent as any).roomId = roomId
+      setShowCreateModal(true)
+    }
+  }, [location.state, isAdmin])
 
   // Save events to localStorage whenever events change
   useEffect(() => {
     if (events.length > 0) {
-      // Convert Date objects to ISO strings for storage
       const eventsForStorage = events.map(e => ({
         ...e,
         date: e.date instanceof Date ? e.date.toISOString() : e.date
@@ -64,11 +92,12 @@ const Calendar = () => {
       return
     }
 
+    const roomId = (location.state as any)?.roomId || (newEvent as any).roomId
     const event: Event = {
       id: uuid(),
       title: newEvent.title,
       description: newEvent.description,
-      date: clickedDate ? clickedDate.toISOString().split('T')[0] : newEvent.date,
+      date: new Date(newEvent.date),
       time: `${newEvent.from} - ${newEvent.to}`,
       from: newEvent.from,
       to: newEvent.to,
@@ -77,15 +106,18 @@ const Calendar = () => {
       sharedWith: newEvent.sharedWith,
       createdAt: nowISO(),
       updatedAt: nowISO(),
+    } as any
+    
+    if (roomId) {
+      (event as any).roomId = roomId
+      if (!event.description) {
+        event.description = `Room: ${roomId}`
+      } else if (!event.description.includes(`Room: ${roomId}`)) {
+        event.description = `Room: ${roomId}\n${event.description}`
+      }
     }
 
-    const eventDate = clickedDate || new Date(newEvent.date)
-    const eventWithDate = {
-      ...event,
-      date: eventDate
-    }
-
-    setEvents([...events, eventWithDate])
+    setEvents([...events, event])
     setToast({ message: 'Event created successfully', type: 'success' })
     setNewEvent({
       title: '',
@@ -98,7 +130,6 @@ const Calendar = () => {
       sharedWith: []
     })
     setShowCreateModal(false)
-    setClickedDate(null)
   }
 
   const handleDeleteEvent = (eventId: string) => {
@@ -109,7 +140,7 @@ const Calendar = () => {
   }
 
   const handleEditEvent = () => {
-    if (!selectedEvent) return
+    if (!selectedEvent || !isAdmin) return
     setNewEvent({
       title: selectedEvent.title,
       description: selectedEvent.description,
@@ -128,7 +159,7 @@ const Calendar = () => {
   }
 
   const handleUpdateEvent = () => {
-    if (!selectedEvent || !newEvent.title.trim()) {
+    if (!selectedEvent || !newEvent.title.trim() || !isAdmin) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
     }
@@ -164,132 +195,33 @@ const Calendar = () => {
   }
 
   const handleDateClick = (date: Date) => {
-    setClickedDate(date)
-    setNewEvent({
-      ...newEvent,
-      date: date.toISOString().split('T')[0]
-    })
-    setShowCreateModal(true)
+    setSelectedDate(date)
+    if (isAdmin) {
+      setNewEvent({
+        ...newEvent,
+        date: date.toISOString().split('T')[0]
+      })
+      setShowCreateModal(true)
+    }
   }
 
   const handleEventClick = (event: Event) => {
     setSelectedEvent(event)
     setShowEventDetailsModal(true)
-  }
-
-  // AI Smart Scheduling - Suggest best times
-  const suggestBestTimes = () => {
-    const allEvents = events.map(e => {
-      const eventDate = e.date instanceof Date ? e.date : new Date(e.date)
-      const fromTime = e.from || e.time.split(' - ')[0] || '09:00'
-      const toTime = e.to || e.time.split(' - ')[1] || '10:00'
-      return {
-        date: eventDate,
-        from: fromTime,
-        to: toTime
-      }
-    })
-
-    // Get next 7 days
-    const suggestions = []
-    const today = new Date()
-    
-    for (let i = 1; i <= 7; i++) {
-      const checkDate = new Date(today)
-      checkDate.setDate(today.getDate() + i)
-      
-      // Check morning (9-11), afternoon (2-4), late afternoon (4-6)
-      const timeSlots = [
-        { from: '09:00', to: '11:00', label: '9:00 AM - 11:00 AM' },
-        { from: '14:00', to: '16:00', label: '2:00 PM - 4:00 PM' },
-        { from: '16:00', to: '18:00', label: '4:00 PM - 6:00 PM' }
-      ]
-
-      for (const slot of timeSlots) {
-        const hasConflict = allEvents.some(e => {
-          const eventDate = new Date(e.date)
-          return (
-            eventDate.toDateString() === checkDate.toDateString() &&
-            ((slot.from >= e.from && slot.from < e.to) ||
-             (slot.to > e.from && slot.to <= e.to) ||
-             (slot.from <= e.from && slot.to >= e.to))
-          )
-        })
-
-        if (!hasConflict && suggestions.length < 3) {
-          suggestions.push({
-            date: checkDate,
-            time: slot.label,
-            from: slot.from,
-            to: slot.to,
-            reason: 'No conflicts detected'
-          })
-        }
-      }
+    // Track meeting opened
+    if (user?.id) {
+      trackMeetingOpened(event.id, event.title, user.id)
     }
-
-    return suggestions.slice(0, 3)
   }
 
-  // AI Conflict Prediction - Check for overlaps
-  const checkConflicts = () => {
-    const conflicts = []
-    const sortedEvents = [...events].sort((a, b) => {
-      const dateA = a.date instanceof Date ? a.date : new Date(a.date)
-      const dateB = b.date instanceof Date ? b.date : new Date(b.date)
-      return dateA.getTime() - dateB.getTime()
-    })
-
-    for (let i = 0; i < sortedEvents.length; i++) {
-      for (let j = i + 1; j < sortedEvents.length; j++) {
-        const eventA = sortedEvents[i]
-        const eventB = sortedEvents[j]
-        
-        const dateA = eventA.date instanceof Date ? eventA.date : new Date(eventA.date)
-        const dateB = eventB.date instanceof Date ? eventB.date : new Date(eventB.date)
-
-        if (dateA.toDateString() === dateB.toDateString()) {
-          const fromA = eventA.from || eventA.time.split(' - ')[0] || '09:00'
-          const toA = eventA.to || eventA.time.split(' - ')[1] || '10:00'
-          const fromB = eventB.from || eventB.time.split(' - ')[0] || '09:00'
-          const toB = eventB.to || eventB.time.split(' - ')[1] || '10:00'
-
-          // Check for overlap
-          if (
-            (fromA >= fromB && fromA < toB) ||
-            (toA > fromB && toA <= toB) ||
-            (fromA <= fromB && toA >= toB)
-          ) {
-            const overlapMinutes = Math.min(
-              timeToMinutes(toA) - timeToMinutes(fromB),
-              timeToMinutes(toB) - timeToMinutes(fromA)
-            )
-
-            let severity: 'Low' | 'Medium' | 'High' = 'Low'
-            if (overlapMinutes > 30) severity = 'High'
-            else if (overlapMinutes > 15) severity = 'Medium'
-
-            conflicts.push({
-              eventA: eventA.title,
-              eventB: eventB.title,
-              date: dateA,
-              severity,
-              overlapMinutes,
-              suggestion: overlapMinutes > 30 
-                ? 'Move one meeting to a different time'
-                : 'Shorten duration or adjust start time'
-            })
-          }
-        }
-      }
+  const handleJoinEvent = (event: Event) => {
+    // Navigate to video room or meeting
+    const roomId = (event as any).roomId
+    if (roomId) {
+      window.location.href = `/rooms/${roomId}`
+    } else {
+      setToast({ message: 'Joining event... (Demo Mode)', type: 'info' })
     }
-
-    return conflicts
-  }
-
-  const timeToMinutes = (time: string): number => {
-    const [hours, minutes] = time.split(':').map(Number)
-    return hours * 60 + minutes
   }
 
   const getEventsForDate = (date: Date) => {
@@ -303,159 +235,385 @@ const Calendar = () => {
     })
   }
 
-  const todayEvents = getEventsForDate(selectedDate)
+  // Get days for month view
+  const getMonthDays = () => {
+    const year = currentDate.getFullYear()
+    const month = currentDate.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+    const startingDayOfWeek = firstDay.getDay()
+
+    const days: (Date | null)[] = []
+    
+    // Add empty cells for days before month starts
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null)
+    }
+    
+    // Add days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      days.push(new Date(year, month, day))
+    }
+    
+    return days
+  }
+
+  // Get days for week view
+  const getWeekDays = () => {
+    const startOfWeek = new Date(currentDate)
+    const day = startOfWeek.getDay()
+    const diff = startOfWeek.getDate() - day
+    startOfWeek.setDate(diff)
+    
+    const weekDays: Date[] = []
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(startOfWeek)
+      date.setDate(startOfWeek.getDate() + i)
+      weekDays.push(date)
+    }
+    return weekDays
+  }
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentDate)
+    if (direction === 'prev') {
+      newDate.setMonth(newDate.getMonth() - 1)
+    } else {
+      newDate.setMonth(newDate.getMonth() + 1)
+    }
+    setCurrentDate(newDate)
+  }
+
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentDate)
+    if (direction === 'prev') {
+      newDate.setDate(newDate.getDate() - 7)
+    } else {
+      newDate.setDate(newDate.getDate() + 7)
+    }
+    setCurrentDate(newDate)
+  }
+
+  const navigateDay = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentDate)
+    if (direction === 'prev') {
+      newDate.setDate(newDate.getDate() - 1)
+    } else {
+      newDate.setDate(newDate.getDate() + 1)
+    }
+    setCurrentDate(newDate)
+    setSelectedDate(newDate)
+  }
+
+  const selectedDateEvents = getEventsForDate(selectedDate)
+  const isToday = (date: Date) => {
+    const today = new Date()
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear()
+  }
+
+  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const monthDays = getMonthDays()
+  const weekDaysList = getWeekDays()
 
   return (
-    <div className="p-6 md:p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent mb-3 tracking-tight">
-              Calendar
-            </h1>
-            <p className="text-gray-700 dark:text-gray-300 text-base md:text-lg font-medium">
-              Manage events and meetings
-            </p>
+    <div className="page-content">
+      <div className="page-container">
+        <div className="page-header">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="page-title">Calendar</h1>
+              <p className="page-subtitle">Manage events and meetings</p>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="btn-primary"
+              >
+                <FaPlus /> Add Event
+              </button>
+            )}
           </div>
+        </div>
+
+        {/* View Tabs */}
+        <div className="flex gap-2 mb-6 border-b border-gray-200 dark:border-gray-700">
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-6 py-3 bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 dark:from-blue-500 dark:to-green-500 text-white rounded-lg text-sm font-semibold transition-colors duration-200 flex items-center gap-2 shadow-md"
+            onClick={() => setViewMode('month')}
+            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+              viewMode === 'month'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
           >
-            <FaPlus className="text-sm" /> Add Event
+            Month
+          </button>
+          <button
+            onClick={() => setViewMode('week')}
+            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+              viewMode === 'week'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            Week
+          </button>
+          <button
+            onClick={() => setViewMode('day')}
+            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+              viewMode === 'day'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            Day
           </button>
         </div>
 
-        {/* Smart Features Section */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
-          {/* Smart Scheduling */}
-          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl p-6 border-2 border-blue-200/50 dark:border-blue-800/50 shadow-xl shadow-blue-500/10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl flex items-center justify-center">
-                <FaCalendarAlt className="text-white text-xl" />
-              </div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Smart Scheduling</h3>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">AI analyzes team calendars and availability patterns to suggest optimal meeting times automatically.</p>
-            <div className="space-y-2">
-              <div className="p-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">Suggested Times</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Tomorrow 10:00 AM - 95% availability</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400">Friday 2:00 PM - 90% availability</p>
-              </div>
-              <button 
-                onClick={() => setShowSmartSchedulingModal(true)}
-                className="w-full btn-primary text-sm py-2.5"
-              >
-                Suggest Best Times
-              </button>
-            </div>
-          </div>
-
-          {/* Meeting Conflict Prediction */}
-          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl p-6 border-2 border-green-200/50 dark:border-green-800/50 shadow-xl shadow-green-500/10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-green-600 to-blue-600 rounded-xl flex items-center justify-center">
-                <FiAlertTriangle className="text-white text-xl" />
-              </div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Meeting Conflict Prediction</h3>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">AI identifies potential scheduling conflicts and suggests alternatives before they occur.</p>
-            <div className="space-y-2">
-              <div className="p-3 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">Prediction</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">High probability of schedule conflict next week</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400">3 meetings may overlap</p>
-              </div>
-              <button 
-                onClick={() => setShowConflictModal(true)}
-                className="w-full btn-primary text-sm py-2.5"
-              >
-                Check Conflicts
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid lg:grid-cols-3 gap-6">
           {/* Calendar View */}
-          <div className="md:col-span-2 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl border-2 border-blue-200/50 dark:border-blue-800/50 shadow-xl shadow-blue-500/10 p-6">
+          <div className={`lg:col-span-2 card`}>
+            {/* Navigation */}
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                {selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setSelectedDate(new Date(selectedDate.getTime() - 86400000))}
+                  onClick={() => {
+                    if (viewMode === 'month') navigateMonth('prev')
+                    else if (viewMode === 'week') navigateWeek('prev')
+                    else navigateDay('prev')
+                  }}
                   className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-all"
                 >
                   ←
                 </button>
                 <button
-                  onClick={() => setSelectedDate(new Date())}
+                  onClick={() => {
+                    setCurrentDate(new Date())
+                    setSelectedDate(new Date())
+                  }}
                   className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-all"
                 >
                   Today
                 </button>
                 <button
-                  onClick={() => setSelectedDate(new Date(selectedDate.getTime() + 86400000))}
+                  onClick={() => {
+                    if (viewMode === 'month') navigateMonth('next')
+                    else if (viewMode === 'week') navigateWeek('next')
+                    else navigateDay('next')
+                  }}
                   className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-all"
                 >
                   →
                 </button>
               </div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                {viewMode === 'month' && currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                {viewMode === 'week' && `Week of ${weekDaysList[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                {viewMode === 'day' && selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+              </h2>
             </div>
-            <div className="text-center">
-              <button
-                onClick={() => handleDateClick(selectedDate)}
-                className="w-full hover:opacity-80 transition-opacity"
-              >
-                <div className="text-7xl font-bold bg-gradient-to-br from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent mb-3 drop-shadow-lg cursor-pointer hover:scale-105 transition-transform">
-                  {selectedDate.getDate()}
+
+            {/* Month View */}
+            {viewMode === 'month' && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      {weekDays.map(day => (
+                        <th key={day} className="p-3 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+                          {day}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: Math.ceil(monthDays.length / 7) }).map((_, weekIndex) => (
+                      <tr key={weekIndex}>
+                        {weekDays.map((_, dayIndex) => {
+                          const dayIndexInMonth = weekIndex * 7 + dayIndex
+                          const date = monthDays[dayIndexInMonth]
+                          const dayEvents = date ? getEventsForDate(date) : []
+                          
+                          return (
+                            <td
+                              key={dayIndex}
+                              className={`p-2 border border-gray-200 dark:border-gray-700 min-h-[100px] align-top ${
+                                !date ? 'bg-gray-50 dark:bg-gray-900/50' : ''
+                              } ${
+                                date && isToday(date) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                              } ${
+                                date && selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
+                              }`}
+                            >
+                              {date && (
+                                <button
+                                  onClick={() => handleDateClick(date)}
+                                  className={`w-full text-left mb-1 ${
+                                    isToday(date)
+                                      ? 'font-bold text-blue-600 dark:text-blue-400'
+                                      : 'text-gray-900 dark:text-white'
+                                  }`}
+                                >
+                                  {date.getDate()}
+                                </button>
+                              )}
+                              {date && dayEvents.length > 0 && (
+                                <div className="space-y-1">
+                                  {dayEvents.slice(0, 3).map(event => (
+                                    <button
+                                      key={event.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleEventClick(event)
+                                      }}
+                                      className="w-full text-xs p-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded truncate hover:bg-blue-200 dark:hover:bg-blue-900/50"
+                                      title={event.title}
+                                    >
+                                      {event.title}
+                                    </button>
+                                  ))}
+                                  {dayEvents.length > 3 && (
+                                    <div className="text-xs text-gray-500 dark:text-gray-500">
+                                      +{dayEvents.length - 3} more
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Week View */}
+            {viewMode === 'week' && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-7 gap-2">
+                  {weekDaysList.map((date, index) => {
+                    const dayEvents = getEventsForDate(date)
+                    return (
+                      <div
+                        key={index}
+                        className={`p-3 border-2 rounded-lg min-h-[200px] ${
+                          isToday(date)
+                            ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                            : 'border-gray-200 dark:border-gray-700'
+                        } ${
+                          selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
+                        }`}
+                      >
+                        <button
+                          onClick={() => handleDateClick(date)}
+                          className={`font-semibold mb-2 ${
+                            isToday(date)
+                              ? 'text-blue-600 dark:text-blue-400'
+                              : 'text-gray-900 dark:text-white'
+                          }`}
+                        >
+                          <div className="text-sm">{weekDays[index]}</div>
+                          <div className="text-lg">{date.getDate()}</div>
+                        </button>
+                        <div className="space-y-1">
+                          {dayEvents.map(event => (
+                            <button
+                              key={event.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleEventClick(event)
+                              }}
+                              className="w-full text-xs p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 text-left"
+                            >
+                              <div className="font-semibold truncate">{event.title}</div>
+                              <div className="text-xs opacity-75">{event.time}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-                <div className="text-xl font-semibold text-gray-700 dark:text-gray-300">
-                  {selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}
+              </div>
+            )}
+
+            {/* Day View */}
+            {viewMode === 'day' && (
+              <div className="space-y-4">
+                <div className="text-center p-4 border-2 border-blue-200 dark:border-blue-800 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                  <div className="text-4xl font-bold text-blue-600 dark:text-blue-400 mb-2">
+                    {selectedDate.getDate()}
+                  </div>
+                  <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                    {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', year: 'numeric' })}
+                  </div>
                 </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Click to add event</p>
-              </button>
-            </div>
+                <div className="space-y-2">
+                  {Array.from({ length: 24 }).map((_, hour) => {
+                    const hourEvents = selectedDateEvents.filter(event => {
+                      const fromTime = event.from || event.time.split(' - ')[0] || '09:00'
+                      const eventHour = parseInt(fromTime.split(':')[0])
+                      return eventHour === hour
+                    })
+                    return (
+                      <div key={hour} className="flex gap-4 border-b border-gray-200 dark:border-gray-700 pb-2">
+                        <div className="w-16 text-sm text-gray-600 dark:text-gray-400 font-semibold">
+                          {hour.toString().padStart(2, '0')}:00
+                        </div>
+                        <div className="flex-1">
+                          {hourEvents.map(event => (
+                            <button
+                              key={event.id}
+                              onClick={() => handleEventClick(event)}
+                              className="w-full mb-2 p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 text-left"
+                            >
+                              <div className="font-semibold">{event.title}</div>
+                              <div className="text-sm opacity-75">{event.time}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Events List */}
-          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-2xl border-2 border-green-200/50 dark:border-green-800/50 shadow-xl shadow-green-500/10 p-6">
+          {/* Events Panel */}
+          <div className="card">
             <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
               <FaCalendarAlt /> Events
             </h3>
-            {todayEvents.length === 0 ? (
+            <div className="mb-2 text-sm text-gray-600 dark:text-gray-400">
+              {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </div>
+            {selectedDateEvents.length === 0 ? (
               <p className="text-gray-500 dark:text-gray-400 text-center py-8">
                 No events for this day
               </p>
             ) : (
-              <div className="space-y-4">
-                {todayEvents.map((event) => (
+              <div className="space-y-3">
+                {selectedDateEvents.map((event) => (
                   <button
                     key={event.id}
                     onClick={() => handleEventClick(event)}
-                    className="w-full text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all cursor-pointer"
+                    className="w-full text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border-2 border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
                   >
                     <h4 className="font-semibold text-gray-900 dark:text-white mb-2">{event.title}</h4>
-                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">{event.description}</p>
-                    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                    {event.description && (
+                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-2 line-clamp-2">{event.description}</p>
+                    )}
+                    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-1">
                       <FaClock /> {event.time}
                     </div>
                     {event.location && (
-                      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                         <FaMapMarkerAlt /> {event.location}
-                      </div>
-                    )}
-                    {event.showAs && (
-                      <div className="mt-2">
-                        <span className={`text-xs px-2 py-1 rounded ${
-                          event.showAs === 'busy' 
-                            ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' 
-                            : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                        }`}>
-                          {event.showAs === 'busy' ? 'Busy' : 'Free'}
-                        </span>
                       </div>
                     )}
                   </button>
@@ -466,159 +624,131 @@ const Calendar = () => {
         </div>
 
         {/* Create/Edit Event Modal */}
-        <Modal
-          isOpen={showCreateModal}
-          onClose={() => {
-            setShowCreateModal(false)
-            setClickedDate(null)
-            setNewEvent({
-              title: '',
-              description: '',
-              date: new Date().toISOString().split('T')[0],
-              from: '09:00',
-              to: '10:00',
-              location: '',
-              showAs: 'busy',
-              sharedWith: []
-            })
-            if (selectedEvent) setSelectedEvent(null)
-          }}
-          title={selectedEvent ? 'Edit Event' : 'Add New Event'}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Title *
-              </label>
-              <input
-                type="text"
-                value={newEvent.title}
-                onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter event title"
-                required
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+        {isAdmin && (
+          <Modal
+            isOpen={showCreateModal}
+            onClose={() => {
+              setShowCreateModal(false)
+              setNewEvent({
+                title: '',
+                description: '',
+                date: new Date().toISOString().split('T')[0],
+                from: '09:00',
+                to: '10:00',
+                location: '',
+                showAs: 'busy',
+                sharedWith: []
+              })
+              if (selectedEvent) setSelectedEvent(null)
+            }}
+            title={selectedEvent ? 'Edit Event' : 'Add New Event'}
+          >
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  From *
+                  Title *
                 </label>
                 <input
-                  type="time"
-                  value={newEvent.from}
-                  onChange={(e) => setNewEvent({ ...newEvent, from: e.target.value })}
+                  type="text"
+                  value={newEvent.title}
+                  onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
+                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  placeholder="Enter event title"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    From *
+                  </label>
+                  <input
+                    type="time"
+                    value={newEvent.from}
+                    onChange={(e) => setNewEvent({ ...newEvent, from: e.target.value })}
+                    className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    To *
+                  </label>
+                  <input
+                    type="time"
+                    value={newEvent.to}
+                    onChange={(e) => setNewEvent({ ...newEvent, to: e.target.value })}
+                    className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  Date *
+                </label>
+                <input
+                  type="date"
+                  value={newEvent.date}
+                  onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
                   className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                   required
                 />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  To *
+                  Location
                 </label>
                 <input
-                  type="time"
-                  value={newEvent.to}
-                  onChange={(e) => setNewEvent({ ...newEvent, to: e.target.value })}
+                  type="text"
+                  value={newEvent.location}
+                  onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })}
                   className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  required
+                  placeholder="Enter location (optional)"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={newEvent.description}
+                  onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  rows={3}
+                  placeholder="Enter event description"
+                />
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowCreateModal(false)
+                    setNewEvent({
+                      title: '',
+                      description: '',
+                      date: new Date().toISOString().split('T')[0],
+                      from: '09:00',
+                      to: '10:00',
+                      location: '',
+                      showAs: 'busy',
+                      sharedWith: []
+                    })
+                    if (selectedEvent) setSelectedEvent(null)
+                  }}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={selectedEvent ? handleUpdateEvent : handleCreateEvent}
+                  className="btn-primary flex-1"
+                >
+                  {selectedEvent ? 'Update Event' : 'Create Event'}
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Date *
-              </label>
-              <input
-                type="date"
-                value={newEvent.date}
-                onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Location
-              </label>
-              <input
-                type="text"
-                value={newEvent.location}
-                onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter location (optional)"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Description
-              </label>
-              <textarea
-                value={newEvent.description}
-                onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                rows={3}
-                placeholder="Enter event description"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Show As
-              </label>
-              <select
-                value={newEvent.showAs}
-                onChange={(e) => setNewEvent({ ...newEvent, showAs: e.target.value as 'busy' | 'free' })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-              >
-                <option value="busy">Busy</option>
-                <option value="free">Free</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Shared With (tags, comma-separated)
-              </label>
-              <input
-                type="text"
-                value={newEvent.sharedWith.join(', ')}
-                onChange={(e) => setNewEvent({ 
-                  ...newEvent, 
-                  sharedWith: e.target.value.split(',').map(t => t.trim()).filter(t => t) 
-                })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="team, project, urgent"
-              />
-            </div>
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowCreateModal(false)
-                  setClickedDate(null)
-                  setNewEvent({
-                    title: '',
-                    description: '',
-                    date: new Date().toISOString().split('T')[0],
-                    from: '09:00',
-                    to: '10:00',
-                    location: '',
-                    showAs: 'busy',
-                    sharedWith: []
-                  })
-                  if (selectedEvent) setSelectedEvent(null)
-                }}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={selectedEvent ? handleUpdateEvent : handleCreateEvent}
-                className="btn-primary flex-1"
-              >
-                {selectedEvent ? 'Update Event' : 'Create Event'}
-              </button>
-            </div>
-          </div>
-        </Modal>
+          </Modal>
+        )}
 
         {/* Event Details Modal */}
         <Modal
@@ -660,170 +790,37 @@ const Calendar = () => {
                     <span>{selectedEvent.location}</span>
                   </div>
                 )}
-                {selectedEvent.showAs && (
-                  <div>
-                    <span className={`text-sm px-3 py-1 rounded-full ${
-                      selectedEvent.showAs === 'busy' 
-                        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' 
-                        : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                    }`}>
-                      {selectedEvent.showAs === 'busy' ? 'Busy' : 'Free'}
-                    </span>
-                  </div>
-                )}
-                {selectedEvent.sharedWith && selectedEvent.sharedWith.length > 0 && (
-                  <div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Shared with:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedEvent.sharedWith.map((tag, idx) => (
-                        <span key={idx} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <button
-                  onClick={handleEditEvent}
-                  className="btn-secondary flex-1"
+                  onClick={() => handleJoinEvent(selectedEvent)}
+                  className="btn-primary flex-1"
                 >
-                  <FaEdit className="text-sm" />
-                  Edit
+                  <FaVideo /> Join
                 </button>
-                <button
-                  onClick={() => {
-                    if (confirm('Are you sure you want to delete this event?')) {
-                      handleDeleteEvent(selectedEvent.id)
-                    }
-                  }}
-                  className="btn-danger flex-1"
-                >
-                  <FaTrash className="text-sm" />
-                  Delete
-                </button>
+                {isAdmin && (
+                  <>
+                    <button
+                      onClick={handleEditEvent}
+                      className="btn-secondary flex-1"
+                    >
+                      <FaEdit /> Edit
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('Are you sure you want to delete this event?')) {
+                          handleDeleteEvent(selectedEvent.id)
+                        }
+                      }}
+                      className="btn-danger flex-1"
+                    >
+                      <FaTrash /> Delete
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
-        </Modal>
-
-        {/* Smart Scheduling Modal */}
-        <Modal
-          isOpen={showSmartSchedulingModal}
-          onClose={() => setShowSmartSchedulingModal(false)}
-          title="Suggested Meeting Times"
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              AI analyzed your current events and suggests these optimal time slots with no conflicts:
-            </p>
-            {suggestBestTimes().length > 0 ? (
-              <div className="space-y-3">
-                {suggestBestTimes().map((suggestion, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg border-2 border-blue-200 dark:border-blue-800"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <p className="font-semibold text-gray-900 dark:text-white">
-                          {suggestion.date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                        </p>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                          {suggestion.time}
-                        </p>
-                      </div>
-                      <FaCheckCircle className="text-green-600 dark:text-green-400 text-xl" />
-                    </div>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                      ✓ {suggestion.reason}
-                    </p>
-                    <button
-                      onClick={() => {
-                        setNewEvent({
-                          ...newEvent,
-                          date: suggestion.date.toISOString().split('T')[0],
-                          from: suggestion.from,
-                          to: suggestion.to
-                        })
-                        setShowSmartSchedulingModal(false)
-                        setShowCreateModal(true)
-                      }}
-                      className="btn-primary w-full text-sm py-2 mt-3"
-                    >
-                      Use This Time
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <p className="text-gray-600 dark:text-gray-400">
-                  No optimal time slots found. Your calendar is quite busy!
-                </p>
-              </div>
-            )}
-          </div>
-        </Modal>
-
-        {/* Conflict Prediction Modal */}
-        <Modal
-          isOpen={showConflictModal}
-          onClose={() => setShowConflictModal(false)}
-          title="Conflict Prediction"
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              AI checked your calendar for overlapping meetings:
-            </p>
-            {checkConflicts().length > 0 ? (
-              <div className="space-y-3">
-                {checkConflicts().map((conflict, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-lg border-2 border-red-200 dark:border-red-800"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <p className="font-semibold text-gray-900 dark:text-white">
-                          {conflict.eventA} ↔ {conflict.eventB}
-                        </p>
-                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                          {conflict.date.toLocaleDateString()}
-                        </p>
-                      </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        conflict.severity === 'High'
-                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                          : conflict.severity === 'Medium'
-                          ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
-                          : 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
-                      }`}>
-                        {conflict.severity} Risk
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                      Overlap: {conflict.overlapMinutes} minutes
-                    </p>
-                    <p className="text-xs text-gray-700 dark:text-gray-300 mt-2 font-medium">
-                      💡 Suggestion: {conflict.suggestion}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <FaCheckCircle className="text-green-600 dark:text-green-400 text-4xl mx-auto mb-3" />
-                <p className="text-gray-900 dark:text-white font-semibold mb-1">
-                  No Conflicts Detected
-                </p>
-                <p className="text-gray-600 dark:text-gray-400 text-sm">
-                  Your schedule looks good! No overlapping meetings found.
-                </p>
-              </div>
-            )}
-          </div>
         </Modal>
 
         {/* Toast */}
@@ -840,4 +837,3 @@ const Calendar = () => {
 }
 
 export default Calendar
-

@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useState, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { 
   FaVideo, 
@@ -24,6 +24,8 @@ import ThemeToggle from './ThemeToggle'
 import FloatingAIAssistant from './FloatingAIAssistant'
 import GlobalSearch from './GlobalSearch'
 import NotificationsCenter from './NotificationsCenter'
+import { useUser, UserRole } from '../contexts/UserContext'
+import RoleSwitcher from './RoleSwitcher'
 
 interface LayoutProps {
   children: ReactNode
@@ -32,6 +34,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { role } = useUser()
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isDark, setIsDark] = useState(() => {
     return document.documentElement.classList.contains('dark')
@@ -48,18 +51,23 @@ export default function Layout({ children }: LayoutProps) {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
 
-  const navItems = [
-    { path: '/dashboard', icon: FaHome, label: 'Dashboard' },
-    { path: '/rooms', icon: FaUsers, label: 'Rooms' },
-    { path: '/chat', icon: FaComments, label: 'Chat' },
-    { path: '/calendar', icon: FaCalendarAlt, label: 'Calendar' },
-    { path: '/files', icon: FaFile, label: 'Files' },
-    { path: '/recent', icon: FaClock, label: 'Recent' },
-    { path: '/trash', icon: FaTrash, label: 'Trash' },
-    { path: '/security', icon: FaShieldAlt, label: 'Security' },
-    { path: '/administration', icon: FaCog, label: 'Admin' },
-    { path: '/about', icon: FaInfoCircle, label: 'About' },
+  // Define all navigation items with their required roles
+  const allNavItems = [
+    { path: '/dashboard', icon: FaHome, label: 'Dashboard', roles: ['user', 'admin', 'security'] as UserRole[] },
+    { path: '/rooms', icon: FaUsers, label: 'Rooms', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/chat', icon: FaComments, label: 'Chat', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/calendar', icon: FaCalendarAlt, label: 'Calendar', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/files', icon: FaFile, label: 'Files', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/recent', icon: FaClock, label: 'Recent', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/trash', icon: FaTrash, label: 'Trash', roles: ['user', 'admin'] as UserRole[] },
+    { path: '/security', icon: FaShieldAlt, label: 'Security', roles: ['admin', 'security'] as UserRole[] },
+    { path: '/administration', icon: FaCog, label: 'Admin', roles: ['admin'] as UserRole[] },
   ]
+
+  // Filter navigation items based on user role
+  const navItems = useMemo(() => {
+    return allNavItems.filter(item => item.roles.includes(role))
+  }, [role])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50/30 to-green-50/30 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 transition-colors flex">
@@ -251,6 +259,9 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Floating AI Assistant */}
         <FloatingAIAssistant />
+        
+        {/* Role Switcher - For testing/demo (remove in production) */}
+        <RoleSwitcher />
       </div>
     </div>
   )

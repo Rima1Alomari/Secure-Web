@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { FaUsers, FaCog, FaShieldAlt, FaDatabase, FaChartLine, FaKey, FaRobot, FaLightbulb, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle } from 'react-icons/fa'
+import { FaUsers, FaCog, FaShieldAlt, FaDatabase, FaKey, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle } from 'react-icons/fa'
 import TableSkeleton from '../components/TableSkeleton'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
@@ -7,7 +7,7 @@ import { ADMIN_USERS_KEY, SECURITY_LOGS_KEY, FILES_KEY, SECURITY_SETTINGS_KEY, E
 import { AdminUserMock, SecurityLog } from '../types/models'
 
 const Administration = () => {
-  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'security' | 'database' | 'analytics'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'security' | 'database'>('users')
   const [backendConnected] = useState(false) // Demo mode
   const [selectedRowMenu, setSelectedRowMenu] = useState<string | null>(null)
   const [users, setUsers] = useState<AdminUserMock[]>([])
@@ -31,8 +31,7 @@ const Administration = () => {
     { id: 'users', label: 'Users', icon: FaUsers },
     { id: 'settings', label: 'Settings', icon: FaCog },
     { id: 'security', label: 'Security', icon: FaShieldAlt },
-    { id: 'database', label: 'Database', icon: FaDatabase },
-    { id: 'analytics', label: 'Analytics', icon: FaChartLine }
+    { id: 'database', label: 'Database', icon: FaDatabase }
   ]
 
   // Load users from localStorage
@@ -193,51 +192,6 @@ const Administration = () => {
           <p className="page-subtitle">
             Manage system and settings
           </p>
-        </div>
-
-        {/* Insights & Analytics Section */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
-          {/* Insights */}
-          <div className="card">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl flex items-center justify-center">
-                <FaLightbulb className="text-white text-xl" />
-              </div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Insights</h3>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">AI analyzes user activity and patterns to provide actionable recommendations for user management and role assignments.</p>
-            <div className="space-y-2">
-              <div className="p-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">Recommendation</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Consider promoting 2 users to Admin role</p>
-              </div>
-              <div className="p-3 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">Alert</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">3 inactive users detected - review needed</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Analytics */}
-          <div className="card">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-green-600 to-blue-600 rounded-xl flex items-center justify-center">
-                <FaChartLine className="text-white text-xl" />
-              </div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Analytics</h3>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">AI-powered analytics track system performance, user engagement, and trends to help optimize operations.</p>
-            <div className="space-y-2">
-              <div className="p-3 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">System Performance</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">↑ 12% improvement this month</p>
-              </div>
-              <div className="p-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">User Engagement</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">↑ 8% increase in active users</p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* System Status Strip */}
@@ -718,171 +672,6 @@ const Administration = () => {
               </div>
             )}
 
-            {activeTab === 'analytics' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-                  Analytics & Statistics
-                </h2>
-                
-                {/* Stats Cards */}
-                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                  <div className="card">
-                    <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
-                      {users.filter(u => u.status === 'Active').length}
-                    </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      Active Users
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">
-                      {(() => {
-                        const files = getJSON(FILES_KEY, []) || []
-                        return files.length
-                      })()}
-                    </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      Files
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mb-1">
-                      {(() => {
-                        const logs = getJSON(SECURITY_LOGS_KEY, []) || []
-                        return logs.length
-                      })()}
-                    </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      Security Alerts
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="text-2xl font-bold text-orange-600 dark:text-orange-400 mb-1">
-                      {(() => {
-                        const files = getJSON(FILES_KEY, []) || []
-                        const totalSize = files.reduce((sum: number, f: any) => sum + (f.size || 0), 0)
-                        return (totalSize / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
-                      })()}
-                    </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      Storage Used
-                    </div>
-                  </div>
-                </div>
-
-                {/* Charts */}
-                <div className="grid md:grid-cols-2 gap-6 mb-6">
-                  {/* Active Users Chart */}
-                  <div className="card">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Active Users Trend</h3>
-                    <div className="h-48 flex items-end justify-between gap-2">
-                      {[65, 72, 68, 75, 80, 78, 85].map((value, idx) => (
-                        <div key={idx} className="flex-1 flex flex-col items-center">
-                          <div
-                            className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg transition-all hover:opacity-80"
-                            style={{ height: `${value}%` }}
-                            title={`${value} users`}
-                          />
-                          <span className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* File Uploads Trend */}
-                  <div className="card">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">File Uploads Trend</h3>
-                    <div className="h-48 flex items-end justify-between gap-2">
-                      {[45, 52, 48, 60, 55, 70, 65].map((value, idx) => (
-                        <div key={idx} className="flex-1 flex flex-col items-center">
-                          <div
-                            className="w-full bg-gradient-to-t from-green-600 to-green-400 rounded-t-lg transition-all hover:opacity-80"
-                            style={{ height: `${value}%` }}
-                            title={`${value} uploads`}
-                          />
-                          <span className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Security Alerts Chart */}
-                <div className="card mb-6">
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Security Alerts Count</h3>
-                  <div className="h-48 flex items-end justify-between gap-2">
-                    {[12, 8, 15, 10, 18, 14, 20].map((value, idx) => (
-                      <div key={idx} className="flex-1 flex flex-col items-center">
-                        <div
-                          className="w-full bg-gradient-to-t from-red-600 to-red-400 rounded-t-lg transition-all hover:opacity-80"
-                          style={{ height: `${(value / 20) * 100}%` }}
-                          title={`${value} alerts`}
-                        />
-                        <span className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* AI Performance Analytics */}
-                <div className="card">
-                  <div className="flex items-center gap-3 mb-4">
-                    <FaRobot className="text-blue-600 dark:text-blue-400 text-xl" />
-                    <h3 className="font-semibold text-gray-900 dark:text-white text-lg">
-                      AI Performance Analytics
-                    </h3>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Monthly Summary</h4>
-                      <p className="text-sm text-gray-700 dark:text-gray-300">
-                        This month: {users.filter(u => u.status === 'Active').length} active users, {
-                          (() => {
-                            const files = getJSON(FILES_KEY, []) || []
-                            return files.length
-                          })()
-                        } files uploaded, {
-                          (() => {
-                            const logs = getJSON(SECURITY_LOGS_KEY, []) || []
-                            return logs.length
-                          })()
-                        } security scans completed. User engagement increased by 12% compared to last month.
-                      </p>
-                    </div>
-                    
-                    <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Most Used Feature</h4>
-                      <p className="text-sm text-gray-700 dark:text-gray-300">
-                        <strong>File Management</strong> is the most used feature with {
-                          (() => {
-                            const files = getJSON(FILES_KEY, []) || []
-                            return files.length
-                          })()
-                        } files uploaded. Users spend an average of 15 minutes per session managing files.
-                      </p>
-                    </div>
-                    
-                    <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                      <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Suggestions to Improve Engagement</h4>
-                      <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1 list-disc list-inside">
-                        <li>Promote Calendar feature: Only {(() => {
-                          const events = getJSON(EVENTS_KEY, []) || []
-                          return events.length
-                        })()} events created this month - consider highlighting scheduling capabilities</li>
-                        <li>Increase Security awareness: Run more security scans to improve user confidence</li>
-                        <li>Enhance File sharing: Add more collaboration features to increase file-related engagement</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 

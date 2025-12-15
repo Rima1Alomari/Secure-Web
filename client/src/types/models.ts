@@ -13,6 +13,11 @@ export interface Room {
   createdAt: string
   updatedAt: string
   ownerId?: string
+  lastMessage?: string // Last message preview
+  lastMessageTime?: string // Timestamp of last message
+  unreadCount?: number // Number of unread messages
+  roomLevel?: 'Normal' | 'Confidential' // Room security level
+  memberIds?: string[] // List of member user IDs
 }
 
 export interface EventItem {
@@ -43,6 +48,11 @@ export interface FileItem {
   isTrashed?: boolean
   isFolder?: boolean
   deletedAt?: string
+  sharedWith?: string[] // User IDs or room IDs this file is shared with
+  adminLabel?: 'Important' | 'Action' | 'Plan' | 'FYI' // Admin label for shared files
+  adminNote?: string // Admin note/description for shared files
+  roomId?: string // Room/project this file belongs to
+  instructionNote?: string // Admin instruction note for the file
 }
 
 export interface SecurityLog {
@@ -55,6 +65,36 @@ export interface SecurityLog {
   details?: string
   userId?: string
   ipAddress?: string
+}
+
+export interface AuditLog {
+  id: string
+  userId: string
+  userName: string
+  action: 'access' | 'view' | 'download' | 'upload' | 'delete' | 'modify' | 'share'
+  resourceType: 'file' | 'room' | 'meeting' | 'user' | 'settings'
+  resourceId: string
+  resourceName: string
+  classification?: 'Normal' | 'Confidential' | 'Restricted'
+  timestamp: string
+  ipAddress?: string
+  userAgent?: string
+  success: boolean
+  reason?: string // If access was denied, reason why
+}
+
+export interface AccessRule {
+  id: string
+  name: string
+  description: string
+  classification: 'Normal' | 'Confidential' | 'Restricted'
+  allowedRoles: ('user' | 'admin' | 'security')[]
+  allowedUsers?: string[] // Specific user IDs
+  requiresMFA: boolean
+  requiresApproval: boolean
+  createdAt: string
+  updatedAt: string
+  enabled: boolean
 }
 
 export interface NotificationItem {
@@ -80,9 +120,9 @@ export interface AdminUserMock {
 
 export interface RecentActivity {
   id: string
-  type: 'file' | 'video' | 'room' | 'chat' | 'event'
+  type: 'file' | 'room' | 'meeting' // Only opened items
   name: string
-  action: string
+  itemId: string // ID of the file/room/event that was opened
   timestamp: Date | string
   userId?: string
 }
@@ -94,7 +134,18 @@ export interface ChatMessage {
   message: string
   timestamp: Date | string
   isOwn: boolean
-  roomId?: string
+  roomId?: string // For room chats
+  recipientId?: string // For direct chats (the other person's user ID)
+  read?: boolean // Whether the message has been read
+}
+
+export interface DirectChat {
+  id: string // Combination of user IDs, e.g., "user1-user2" (sorted)
+  userId: string // The other user's ID
+  userName: string // The other user's name
+  lastMessage?: string
+  lastMessageTime?: string
+  unreadCount?: number
 }
 
 export interface TrashItem {
@@ -105,5 +156,7 @@ export interface TrashItem {
   deletedAt: string
   originalPath?: string
   canRestore: boolean
+  ownerId?: string // Owner ID for filtering
+  owner?: string // Owner name for display
 }
 

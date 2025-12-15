@@ -1,32 +1,39 @@
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
-import { FaVideo, FaFile, FaUsers, FaCloud, FaArrowRight, FaShieldAlt, FaClock, FaLightbulb, FaPlus, FaCalendarAlt, FaUpload, FaLock } from 'react-icons/fa'
-import CardSkeleton from '../components/CardSkeleton'
+import { useState, useEffect, useMemo } from 'react'
+import { 
+  FaUsers, 
+  FaCalendarAlt, 
+  FaFile, 
+  FaChevronRight,
+  FaPlus,
+  FaUpload,
+  FaDownload,
+  FaCircle,
+  FaChevronDown,
+  FaChevronUp
+} from 'react-icons/fa'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { ROOMS_KEY, EVENTS_KEY, FILES_KEY } from '../data/keys'
-import { Room, EventItem, FileItem } from '../types/models'
+import { ROOMS_KEY, EVENTS_KEY, FILES_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
+import { Room, EventItem, FileItem, ChatMessage } from '../types/models'
+import { useUser } from '../contexts/UserContext'
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const [channelName, setChannelName] = useState('')
+  const { role } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   
   // Modal states
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false)
-  const [showStartMeetingModal, setShowStartMeetingModal] = useState(false)
   const [showNewEventModal, setShowNewEventModal] = useState(false)
+  const [expandedFileId, setExpandedFileId] = useState<string | null>(null)
   
   // Form states
   const [newRoom, setNewRoom] = useState({ name: '', description: '', isPrivate: false })
-  const [newMeeting, setNewMeeting] = useState({ name: '', roomId: '' })
   const [newEvent, setNewEvent] = useState({ title: '', description: '', date: '', time: '', location: '' })
   
   // Toast state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
-  
-  // Get existing rooms for meeting selection
-  const existingRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
 
   useEffect(() => {
     // Simulate loading for 600ms
@@ -36,35 +43,59 @@ const Dashboard = () => {
     return () => clearTimeout(timer)
   }, [])
 
-  const handleJoinVideo = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (channelName.trim()) {
-      navigate(`/video/${channelName.trim()}`)
-    } else {
-      alert('Please enter a channel name')
-    }
-  }
+  // State to trigger refresh
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  const handleOpenFiles = () => {
-    navigate('/files')
-  }
+  // Get rooms with last message and unread count
+  const rooms = useMemo(() => {
+    const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
+    const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+    
+    return allRooms.map(room => {
+      const roomMessages = allMessages
+        .filter(msg => msg.roomId === room.id)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      
+      const lastMessage = roomMessages[0]
+      const unreadCount = roomMessages.filter(msg => !msg.isOwn && msg.read !== true).length
+      
+      return {
+        ...room,
+        lastMessage: lastMessage?.message || 'No messages yet',
+        lastMessageTime: lastMessage?.timestamp || room.updatedAt,
+        unreadCount: unreadCount || 0,
+      }
+    }).sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime())
+  }, [refreshKey])
 
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'create-room':
-        setShowCreateRoomModal(true)
-        break
-      case 'start-meeting':
-        setShowStartMeetingModal(true)
-        break
-      case 'upload-file':
-        handleUploadFile()
-        break
-      case 'new-event':
-        setShowNewEventModal(true)
-        break
-    }
-  }
+  // Get upcoming meetings (next 3-5)
+  const upcomingMeetings = useMemo(() => {
+    const allEvents = getJSON<EventItem[]>(EVENTS_KEY, []) || []
+    const now = new Date()
+    
+    return allEvents
+      .filter(e => {
+        const eventDate = new Date(e.date)
+        return eventDate >= now
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(0, 5)
+  }, [refreshKey])
+
+  // Get shared files (files shared with current user or rooms user is in)
+  const sharedFiles = useMemo(() => {
+    const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+    const userRooms = rooms.map(r => r.id)
+    
+    return allFiles
+      .filter(file => {
+        // File is shared with user or with a room the user is in
+        return file.sharedWith && file.sharedWith.length > 0 && 
+               (file.sharedWith.includes('current-user') || 
+                file.sharedWith.some(roomId => userRooms.includes(roomId)))
+      })
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
+  }, [rooms, refreshKey])
 
   const handleCreateRoom = () => {
     if (!newRoom.name.trim()) {
@@ -83,29 +114,13 @@ const Dashboard = () => {
       updatedAt: nowISO(),
     }
 
-    const rooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-    setJSON(ROOMS_KEY, [...rooms, room])
+    const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
+    setJSON(ROOMS_KEY, [...allRooms, room])
     
     setToast({ message: 'Room created', type: 'success' })
     setShowCreateRoomModal(false)
     setNewRoom({ name: '', description: '', isPrivate: false })
-  }
-
-  const handleStartMeeting = () => {
-    if (!newMeeting.name.trim()) {
-      setToast({ message: 'Please enter a meeting name', type: 'error' })
-      return
-    }
-
-    if (newMeeting.roomId) {
-      navigate(`/rooms/${newMeeting.roomId}`)
-    } else {
-      navigate(`/meeting/${uuid()}`)
-    }
-    
-    setToast({ message: 'Meeting started (Demo Mode)', type: 'info' })
-    setShowStartMeetingModal(false)
-    setNewMeeting({ name: '', roomId: '' })
+    setRefreshKey(prev => prev + 1) // Refresh data
   }
 
   const handleUploadFile = () => {
@@ -125,10 +140,11 @@ const Dashboard = () => {
         owner: 'Current User',
       }
 
-      const files = getJSON<FileItem[]>(FILES_KEY, []) || []
-      setJSON(FILES_KEY, [...files, fileItem])
+      const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+      setJSON(FILES_KEY, [...allFiles, fileItem])
       
       setToast({ message: `File "${file.name}" uploaded`, type: 'success' })
+      setRefreshKey(prev => prev + 1) // Refresh data
     }
     input.click()
   }
@@ -150,66 +166,76 @@ const Dashboard = () => {
       updatedAt: nowISO(),
     }
 
-    const events = getJSON<EventItem[]>(EVENTS_KEY, []) || []
-    setJSON(EVENTS_KEY, [...events, event])
+    const allEvents = getJSON<EventItem[]>(EVENTS_KEY, []) || []
+    setJSON(EVENTS_KEY, [...allEvents, event])
     
     setToast({ message: 'Event created', type: 'success' })
     setShowNewEventModal(false)
     setNewEvent({ title: '', description: '', date: '', time: '', location: '' })
+    setRefreshKey(prev => prev + 1) // Refresh data
   }
 
-  // Get recent files and upcoming events for display
-  const recentFiles = getJSON<FileItem[]>(FILES_KEY, [])?.slice(-3).reverse() || []
-  const upcomingEvents = getJSON<EventItem[]>(EVENTS_KEY, [])
-    ?.filter(e => {
-      const eventDate = new Date(e.date)
-      return eventDate >= new Date()
-    })
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .slice(0, 1) || []
+  const handleMeetingClick = (event: EventItem) => {
+    navigate('/calendar', { state: { focusEventId: event.id } })
+  }
+
+  const handleRoomClick = (roomId: string) => {
+    navigate(`/rooms/${roomId}`)
+  }
+
+  const handleDownloadFile = (file: FileItem) => {
+    // Demo mode - just show toast
+    setToast({ message: `Downloading "${file.name}" (Demo Mode)`, type: 'info' })
+  }
+
+  const formatTimeAgo = (timestamp: string) => {
+    const date = new Date(timestamp)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays < 7) return `${diffDays}d ago`
+    return date.toLocaleDateString()
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  const getAdminLabelColor = (label?: string) => {
+    switch (label) {
+      case 'Important': return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+      case 'Action': return 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+      case 'Plan': return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+      case 'FYI': return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+      default: return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+    }
+  }
 
   if (isLoading) {
     return (
       <div className="page-content">
         <div className="page-container">
-          {/* Hero Section Skeleton */}
-          <div className="text-center mb-16 animate-pulse">
-            <div className="w-20 h-20 bg-gray-300 dark:bg-gray-700 rounded-2xl mx-auto mb-6"></div>
-            <div className="h-12 bg-gray-300 dark:bg-gray-700 rounded-lg w-96 mx-auto mb-6"></div>
-            <div className="h-6 bg-gray-200 dark:bg-gray-600 rounded-lg w-3/4 mx-auto"></div>
-          </div>
-
-          {/* Quick Actions Skeleton */}
-          <div className="mb-12">
-            <div className="h-7 bg-gray-300 dark:bg-gray-700 rounded-lg w-32 mb-4"></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="card animate-pulse p-6">
-                  <div className="w-14 h-14 bg-gray-300 dark:bg-gray-700 rounded-xl mx-auto mb-4"></div>
-                  <div className="h-4 bg-gray-300 dark:bg-gray-700 rounded w-20 mx-auto mb-1"></div>
-                  <div className="h-3 bg-gray-200 dark:bg-gray-600 rounded w-16 mx-auto"></div>
-                </div>
+          <div className="space-y-8 animate-pulse">
+            <div className="h-8 bg-gray-300 dark:bg-gray-700 rounded-lg w-48"></div>
+            <div className="card space-y-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-20 bg-gray-200 dark:bg-gray-600 rounded-lg"></div>
               ))}
             </div>
-          </div>
-
-          {/* Main Features Grid Skeleton */}
-          <div className="grid md:grid-cols-2 gap-6 mb-12">
-            <CardSkeleton />
-            <CardSkeleton />
-          </div>
-
-          {/* Features Grid Skeleton */}
-          <div className="grid md:grid-cols-3 gap-6 mb-12">
-            <CardSkeleton />
-            <CardSkeleton />
-            <CardSkeleton />
-          </div>
-
-          {/* AI Features Skeleton */}
-          <div className="grid md:grid-cols-2 gap-6 mb-12">
-            <CardSkeleton />
-            <CardSkeleton />
+            <div className="h-8 bg-gray-300 dark:bg-gray-700 rounded-lg w-48"></div>
+            <div className="card space-y-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-16 bg-gray-200 dark:bg-gray-600 rounded-lg"></div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -219,275 +245,242 @@ const Dashboard = () => {
   return (
     <div className="page-content">
       <div className="page-container">
-        {/* Hero Section */}
-        <div className="text-center mb-16 animate-fade-in">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-2xl mb-6 shadow-2xl shadow-blue-500/30 ring-4 ring-blue-500/10">
-            <FaShieldAlt className="text-white text-3xl" />
-          </div>
-          <h2 className="text-4xl md:text-5xl font-bold mb-6 bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent tracking-tight">
-            Welcome to Secure Web
-          </h2>
-          <p className="text-xl md:text-2xl text-gray-700 dark:text-gray-300 max-w-3xl mx-auto leading-relaxed font-medium">
-            Advanced secure collaboration platform with quantum-resistant encryption, AI threat detection, and zero-trust architecture
-          </p>
+        {/* Page Header */}
+        <div className="page-header">
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">Overview of your rooms, meetings, and shared files</p>
         </div>
 
-        {/* Stats Chips */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
-          <div className="card p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl flex items-center justify-center shadow-lg">
-              <FaVideo className="text-white text-xl" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">3</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Active Rooms</div>
-            </div>
-          </div>
-          <div className="card p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-              <FaCalendarAlt className="text-white text-xl" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">5</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Upcoming Events</div>
-            </div>
-          </div>
-          <div className="card p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-green-600 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-              <FaFile className="text-white text-xl" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">12</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Files</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Actions Section */}
-        <div className="mb-12">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <button
-              onClick={() => handleQuickAction('create-room')}
-              className="card-hover p-6 text-center group transition-all duration-300 hover:shadow-2xl hover:shadow-blue-500/30 hover:-translate-y-1"
-            >
-              <div className="flex items-center justify-center w-14 h-14 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl mb-4 mx-auto transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-blue-500/30">
-                <FaPlus className="text-white text-xl" />
-              </div>
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Create Room</h4>
-              <p className="text-xs text-gray-600 dark:text-gray-400">Start a new room</p>
-            </button>
-
-            <button
-              onClick={() => handleQuickAction('start-meeting')}
-              className="card-hover p-6 text-center group transition-all duration-300 hover:shadow-2xl hover:shadow-green-500/30 hover:-translate-y-1"
-            >
-              <div className="flex items-center justify-center w-14 h-14 bg-gradient-to-br from-green-600 to-blue-600 rounded-xl mb-4 mx-auto transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-green-500/30">
-                <FaVideo className="text-white text-xl" />
-              </div>
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Start Meeting</h4>
-              <p className="text-xs text-gray-600 dark:text-gray-400">Join a video call</p>
-            </button>
-
-            <button
-              onClick={() => handleQuickAction('upload-file')}
-              className="card-hover p-6 text-center group transition-all duration-300 hover:shadow-2xl hover:shadow-blue-500/30 hover:-translate-y-1"
-            >
-              <div className="flex items-center justify-center w-14 h-14 bg-gradient-to-br from-blue-500 to-green-500 rounded-xl mb-4 mx-auto transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-blue-500/30">
-                <FaUpload className="text-white text-xl" />
-              </div>
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Upload File</h4>
-              <p className="text-xs text-gray-600 dark:text-gray-400">Add a new file</p>
-            </button>
-
-            <button
-              onClick={() => handleQuickAction('new-event')}
-              className="card-hover p-6 text-center group transition-all duration-300 hover:shadow-2xl hover:shadow-purple-500/30 hover:-translate-y-1"
-            >
-              <div className="flex items-center justify-center w-14 h-14 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl mb-4 mx-auto transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-purple-500/30">
-                <FaCalendarAlt className="text-white text-xl" />
-              </div>
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">New Event</h4>
-              <p className="text-xs text-gray-600 dark:text-gray-400">Schedule meeting</p>
-            </button>
-          </div>
-        </div>
-
-        {/* Main Features Grid */}
-        <div className="grid md:grid-cols-2 gap-6 mb-12">
-          {/* Video Meetings Card */}
-          <div className="group card-hover p-8">
-            <div className="flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-600 via-blue-500 to-blue-400 rounded-2xl mb-6 transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-blue-500/30 ring-4 ring-blue-500/10">
-              <FaVideo className="text-white text-3xl" />
-            </div>
-            <h3 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-blue-500 dark:from-blue-400 dark:to-blue-300 bg-clip-text text-transparent mb-4">Video Meetings</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-6 leading-relaxed text-sm">
-              Start or join high-quality video meetings with real-time audio, video, and screen sharing. Create rooms for team collaboration, schedule meetings, and connect instantly with HD quality and ultra-low latency.
-            </p>
-            <form onSubmit={handleJoinVideo} className="space-y-4">
-              <input
-                type="text"
-                value={channelName}
-                onChange={(e) => setChannelName(e.target.value)}
-                placeholder="Enter channel name"
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
-                required
-              />
+        {/* Admin-only Quick Actions */}
+        {role === 'admin' && (
+          <div className="mb-8">
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Quick Actions</h3>
+            <div className="flex flex-wrap gap-3">
               <button
-                type="submit"
-                className="w-full btn-primary"
+                onClick={() => setShowCreateRoomModal(true)}
+                className="btn-primary"
               >
-                Join Meeting <FaArrowRight />
+                <FaPlus /> Create Room
               </button>
-            </form>
-          </div>
-
-          {/* File Manager Card */}
-          <div className="group card-hover p-8">
-            <div className="flex items-center justify-center w-20 h-20 bg-gradient-to-br from-green-600 via-green-500 to-green-400 rounded-2xl mb-6 transition-transform duration-300 group-hover:scale-110 shadow-lg shadow-green-500/30 ring-4 ring-green-500/10">
-              <FaFile className="text-white text-3xl" />
+              <button
+                onClick={handleUploadFile}
+                className="btn-primary"
+              >
+                <FaUpload /> Upload File
+              </button>
+              <button
+                onClick={() => setShowNewEventModal(true)}
+                className="btn-primary"
+              >
+                <FaCalendarAlt /> Add Meeting
+              </button>
             </div>
-            <h3 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-green-500 dark:from-green-400 dark:to-green-300 bg-clip-text text-transparent mb-4">File Manager</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-6 leading-relaxed text-sm">
-              Upload, manage, and share your files securely. Collaborate on documents with real-time editing. All files are encrypted and stored safely in the cloud.
-            </p>
-            <button
-              onClick={handleOpenFiles}
-              className="w-full btn-primary"
-            >
-              Open Files <FaArrowRight />
-            </button>
           </div>
-        </div>
+        )}
 
-        {/* Features Grid */}
-        <div className="grid md:grid-cols-3 gap-6 mb-12">
-          {/* Security Scan */}
-          <div className="card-hover">
-            <div className="flex items-center justify-center w-16 h-16 bg-gradient-to-br from-red-600 to-orange-500 rounded-xl mb-4 shadow-lg shadow-red-500/30">
-              <FaLock className="text-white text-2xl" />
+        <div className="grid lg:grid-cols-2 gap-8">
+          {/* My Rooms Section */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">My Rooms</h2>
+              <button
+                onClick={() => navigate('/rooms')}
+                className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                View all <FaChevronRight className="text-xs" />
+              </button>
             </div>
-            <h4 className="text-gray-900 dark:text-white font-bold text-lg mb-2">Security Scan</h4>
-            <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed mb-3">Last scan: 2 hours ago</p>
-            <button
-              onClick={() => navigate('/security')}
-              className="btn-secondary w-full text-sm py-2"
-            >
-              Run Scan
-            </button>
-          </div>
-
-          {/* Recent Files */}
-          <div className="card-hover">
-            <div className="flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-600 to-green-400 rounded-xl mb-4 shadow-lg shadow-green-500/30">
-              <FaFile className="text-white text-2xl" />
-            </div>
-            <h4 className="text-gray-900 dark:text-white font-bold text-lg mb-2">Recent Files</h4>
-            {recentFiles.length > 0 ? (
-              <div className="space-y-2">
-                {recentFiles.map((file) => (
-                  <div key={file.id} className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                    {file.name}
-                  </div>
+            
+            {rooms.length === 0 ? (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <FaUsers className="text-4xl mx-auto mb-3 opacity-50" />
+                <p>No rooms yet</p>
+                {role === 'admin' && (
+                  <button
+                    onClick={() => setShowCreateRoomModal(true)}
+                    className="btn-primary mt-4"
+                  >
+                    Create Room
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {rooms.map((room) => (
+                  <button
+                    key={room.id}
+                    onClick={() => handleRoomClick(room.id)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all duration-200 ${
+                      room.unreadCount && room.unreadCount > 0
+                        ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/10'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-gray-800'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+                            {room.name}
+                          </h3>
+                          {room.unreadCount && room.unreadCount > 0 && (
+                            <span className="flex-shrink-0 px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full">
+                              {room.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mb-1">
+                          {room.lastMessage}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-500">
+                          {formatTimeAgo(room.lastMessageTime || room.updatedAt)}
+                        </p>
+                      </div>
+                      <FaChevronRight className="text-gray-400 flex-shrink-0 mt-1" />
+                    </div>
+                  </button>
                 ))}
               </div>
-            ) : (
-              <p className="text-gray-600 dark:text-gray-400 text-sm">No recent files</p>
             )}
+          </div>
+
+          {/* Upcoming Meetings Section */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Upcoming Meetings</h2>
+              <button
+                onClick={() => navigate('/calendar')}
+                className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                View all <FaChevronRight className="text-xs" />
+              </button>
+            </div>
+            
+            {upcomingMeetings.length === 0 ? (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <FaCalendarAlt className="text-4xl mx-auto mb-3 opacity-50" />
+                <p>No upcoming meetings</p>
+                {role === 'admin' && (
+                  <button
+                    onClick={() => setShowNewEventModal(true)}
+                    className="btn-primary mt-4"
+                  >
+                    Add Meeting
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {upcomingMeetings.map((meeting) => (
+                  <button
+                    key={meeting.id}
+                    onClick={() => handleMeetingClick(meeting)}
+                    className="w-full text-left p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-gray-800 transition-all duration-200"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 dark:text-white mb-1 truncate">
+                          {meeting.title}
+                        </h3>
+                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-1">
+                          <FaCalendarAlt className="text-xs" />
+                          <span>{new Date(meeting.date).toLocaleDateString()}</span>
+                          <span className="mx-1">•</span>
+                          <span>{meeting.time}</span>
+                        </div>
+                        {meeting.location && (
+                          <p className="text-xs text-gray-500 dark:text-gray-500">
+                            📍 {meeting.location}
+                          </p>
+                        )}
+                      </div>
+                      <FaChevronRight className="text-gray-400 flex-shrink-0 mt-1" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Shared Files for Me Section */}
+        <div className="card mt-8">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Shared Files for Me</h2>
             <button
               onClick={() => navigate('/files')}
-              className="btn-secondary w-full text-sm py-2 mt-3"
+              className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
             >
-              View All
+              View all <FaChevronRight className="text-xs" />
             </button>
           </div>
-
-          {/* Upcoming Event */}
-          <div className="card-hover">
-            <div className="flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-blue-500 rounded-xl mb-4 shadow-lg shadow-purple-500/30">
-              <FaCalendarAlt className="text-white text-2xl" />
+          
+          {sharedFiles.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <FaFile className="text-4xl mx-auto mb-3 opacity-50" />
+              <p>No shared files</p>
             </div>
-            <h4 className="text-gray-900 dark:text-white font-bold text-lg mb-2">Upcoming Event</h4>
-            {upcomingEvents.length > 0 ? (
-              <div>
-                <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-                  {upcomingEvents[0].title}
-                </p>
-                <p className="text-xs text-gray-600 dark:text-gray-400">
-                  {new Date(upcomingEvents[0].date).toLocaleDateString()} at {upcomingEvents[0].time}
-                </p>
-              </div>
-            ) : (
-              <p className="text-gray-600 dark:text-gray-400 text-sm">No upcoming events</p>
-            )}
-            <button
-              onClick={() => navigate('/calendar')}
-              className="btn-secondary w-full text-sm py-2 mt-3"
-            >
-              View Calendar
-            </button>
-          </div>
-        </div>
-
-        {/* Insights Section */}
-        <div className="grid md:grid-cols-2 gap-6 mb-12">
-          {/* Meeting Summary Widget */}
-          <div className="card-hover">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-green-600 rounded-xl flex items-center justify-center">
-                <FaClock className="text-white text-xl" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Meeting Summary</h3>
-            </div>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">AI-powered summaries automatically extract key points, action items, and decisions from your meetings.</p>
+          ) : (
             <div className="space-y-3">
-              <div className="p-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg">
-                <p className="text-sm text-gray-700 dark:text-gray-300 font-medium">Last Meeting: Project Review</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Key points: 5 action items, 3 decisions made</p>
-              </div>
-              <button className="w-full btn-primary text-sm py-2.5">
-                View Full Summary
-              </button>
+              {sharedFiles.map((file) => (
+                <div
+                  key={file.id}
+                  className="p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <FaFile className="text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                        <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+                          {file.name}
+                        </h3>
+                        {file.adminLabel && (
+                          <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${getAdminLabelColor(file.adminLabel)}`}>
+                            {file.adminLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-500 mb-2">
+                        <span>{formatFileSize(file.size)}</span>
+                        <span>•</span>
+                        <span>{new Date(file.uploadedAt).toLocaleDateString()}</span>
+                        <span>•</span>
+                        <span>by {file.owner}</span>
+                      </div>
+                      {expandedFileId === file.id && file.adminNote && (
+                        <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                          <p className="text-sm text-gray-700 dark:text-gray-300">
+                            <strong>Admin Note:</strong> {file.adminNote}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {file.adminNote && (
+                        <button
+                          onClick={() => setExpandedFileId(expandedFileId === file.id ? null : file.id)}
+                          className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                          title={expandedFileId === file.id ? 'Hide note' : 'Show admin note'}
+                        >
+                          {expandedFileId === file.id ? (
+                            <FaChevronUp />
+                          ) : (
+                            <FaChevronDown />
+                          )}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDownloadFile(file)}
+                        className="btn-secondary px-3 py-1.5 text-sm"
+                        title="Download file"
+                      >
+                        <FaDownload />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-
-          {/* Insights Widget */}
-          <div className="card-hover">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-green-600 to-blue-600 rounded-xl flex items-center justify-center">
-                <FaLightbulb className="text-white text-xl" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Insights</h3>
-            </div>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">AI analyzes team availability and meeting patterns to suggest optimal meeting times and productivity insights.</p>
-            <div className="space-y-3">
-              <div className="p-3 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-lg">
-                <p className="text-sm text-gray-700 dark:text-gray-300 font-medium">Best Meeting Time</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Tomorrow 10:00 AM - 95% availability</p>
-              </div>
-              <button className="w-full btn-primary text-sm py-2.5">
-                View Insights
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Stats Section */}
-        <div className="bg-gradient-to-br from-blue-600 via-blue-500 to-green-600 dark:from-blue-700 dark:via-blue-600 dark:to-green-700 rounded-2xl p-8 shadow-2xl shadow-blue-500/30 ring-4 ring-blue-500/10 text-white">
-          <div className="grid md:grid-cols-3 gap-8 text-center">
-            <div className="transform hover:scale-110 transition-transform duration-300">
-              <div className="text-5xl font-bold mb-3 drop-shadow-lg">∞</div>
-              <div className="text-white/90 text-base font-semibold">Unlimited Meetings</div>
-            </div>
-            <div className="transform hover:scale-110 transition-transform duration-300">
-              <div className="text-5xl font-bold mb-3 drop-shadow-lg">100%</div>
-              <div className="text-white/90 text-base font-semibold">Secure & Encrypted</div>
-            </div>
-            <div className="transform hover:scale-110 transition-transform duration-300">
-              <div className="text-5xl font-bold mb-3 drop-shadow-lg">24/7</div>
-              <div className="text-white/90 text-base font-semibold">Always Available</div>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Create Room Modal */}
@@ -552,68 +545,6 @@ const Dashboard = () => {
                 className="btn-primary flex-1"
               >
                 Create Room
-              </button>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Start Meeting Modal */}
-        <Modal
-          isOpen={showStartMeetingModal}
-          onClose={() => {
-            setShowStartMeetingModal(false)
-            setNewMeeting({ name: '', roomId: '' })
-          }}
-          title="Start Meeting"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Meeting Name *
-              </label>
-              <input
-                type="text"
-                value={newMeeting.name}
-                onChange={(e) => setNewMeeting({ ...newMeeting, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter meeting name"
-                required
-              />
-            </div>
-            {existingRooms.length > 0 && (
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Select Room (Optional)
-                </label>
-                <select
-                  value={newMeeting.roomId}
-                  onChange={(e) => setNewMeeting({ ...newMeeting, roomId: e.target.value })}
-                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                >
-                  <option value="">Create new meeting</option>
-                  {existingRooms.map((room) => (
-                    <option key={room.id} value={room.id}>
-                      {room.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowStartMeetingModal(false)
-                  setNewMeeting({ name: '', roomId: '' })
-                }}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleStartMeeting}
-                className="btn-primary flex-1"
-              >
-                Start Meeting
               </button>
             </div>
           </div>
