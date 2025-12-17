@@ -25,17 +25,17 @@ import FloatingAIAssistant from './FloatingAIAssistant'
 import GlobalSearch from './GlobalSearch'
 import NotificationsCenter from './NotificationsCenter'
 import { useUser, UserRole } from '../contexts/UserContext'
-import RoleSwitcher from './RoleSwitcher'
 import { getJSON } from '../data/storage'
 
 interface LayoutProps {
   children: ReactNode
+  onLogout?: () => void
 }
 
-export default function Layout({ children }: LayoutProps) {
+export default function Layout({ children, onLogout }: LayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { role } = useUser()
+  const { role, setUser } = useUser()
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isDark, setIsDark] = useState(() => {
     return document.documentElement.classList.contains('dark')
@@ -66,10 +66,17 @@ export default function Layout({ children }: LayoutProps) {
   }, [])
 
   const handleLogout = () => {
-    // Temporarily disabled - just navigate to dashboard
-    // removeToken()
-    // navigate('/login')
-    navigate('/dashboard')
+    // Remove token and user data
+    removeToken()
+    setUser(null)
+    
+    // Notify parent component if callback provided
+    if (onLogout) {
+      onLogout()
+    }
+    
+    // Navigate to login
+    navigate('/login')
   }
 
   const isActive = (path: string) => {
@@ -247,7 +254,9 @@ export default function Layout({ children }: LayoutProps) {
 
                 {/* Right Side Actions */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <RoleSwitcher />
+                  <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 px-2 py-1 bg-white/90 dark:bg-gray-800/90 backdrop-blur-lg border border-blue-200/50 dark:border-blue-800/50 rounded-lg">
+                    Role: <span className="text-blue-600 dark:text-blue-400 font-bold capitalize">{role}</span>
+                  </div>
                   <NotificationsCenter />
                   <button
                     onClick={handleLogout}
@@ -276,7 +285,9 @@ export default function Layout({ children }: LayoutProps) {
 
               {/* Right Side Actions */}
               <div className="flex items-center gap-2 flex-shrink-0">
-                <RoleSwitcher />
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 px-2 py-1 bg-white/90 dark:bg-gray-800/90 backdrop-blur-lg border border-blue-200/50 dark:border-blue-800/50 rounded-lg">
+                  Role: <span className="text-blue-600 dark:text-blue-400 font-bold capitalize">{role}</span>
+                </div>
                 <NotificationsCenter />
               </div>
             </div>

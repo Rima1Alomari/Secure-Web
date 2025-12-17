@@ -12,6 +12,11 @@ export const deviceFingerprint = (req, res, next) => {
 
 // KSA IP whitelist middleware
 export const ksaIPWhitelist = (req, res, next) => {
+  // Skip KSA IP check in development mode
+  if (process.env.NODE_ENV === 'development') {
+    return next()
+  }
+  
   // Skip KSA IP check for AI routes in development
   if (req.path.startsWith('/api/ai') && process.env.NODE_ENV === 'development') {
     return next()
@@ -91,10 +96,16 @@ export const secureErrorHandler = (err, req, res, next) => {
 
 // Initialize security middleware
 export const initializeSecurityMiddleware = (app) => {
-  // Skip device fingerprinting for AI routes in development
+  // Skip device fingerprinting in development mode for all routes
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api/ai') && process.env.NODE_ENV === 'development') {
-      return next() // Skip security middleware for AI routes
+    // Skip security middleware for auth and AI routes in development
+    if (process.env.NODE_ENV === 'development') {
+      // Skip all security checks in development mode
+      return next()
+    }
+    // In production, only skip for AI routes
+    if (req.path.startsWith('/api/ai')) {
+      return next()
     }
     deviceFingerprint(req, res, next)
   })

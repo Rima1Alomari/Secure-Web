@@ -39,7 +39,7 @@ const io = new Server(httpServer, {
   }
 })
 
-const PORT = process.env.PORT || 5000
+const PORT = process.env.PORT || 5001
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/cybrany'
 
 // Security Middleware - Relaxed for development
@@ -55,7 +55,22 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }))
 
-// Rate Limiting - More lenient for development, skip for AI routes
+// IMPORTANT: Bypass ALL middleware for auth routes FIRST in development
+// This MUST be before any other middleware including rate limiter
+if (process.env.NODE_ENV === 'development') {
+  console.log('🔓 Development mode: Auth routes completely bypassed')
+  // Bypass ALL middleware for auth routes - MUST be first, before rate limiter
+  app.use('/api/auth', (req, res, next) => {
+    console.log(`✅ Auth route bypassed: ${req.method} ${req.path} from ${req.ip}`)
+    next()
+  })
+  app.use('/api/ai', (req, res, next) => {
+    console.log(`✅ AI route bypassed: ${req.method} ${req.path}`)
+    next()
+  })
+}
+
+// Rate Limiting - More lenient for development, skip for AI and auth routes
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === 'production' ? 100 : 1000, // Higher limit in development
@@ -63,10 +78,18 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting for AI routes in development
-    return req.path.startsWith('/api/ai') && process.env.NODE_ENV === 'development'
+    // Skip rate limiting for AI and auth routes in development
+    if (process.env.NODE_ENV === 'development') {
+      const shouldSkip = req.path.startsWith('/api/ai') || req.path.startsWith('/api/auth')
+      if (shouldSkip) {
+        console.log(`⏭️ Rate limiter skipped for: ${req.path}`)
+      }
+      return shouldSkip
+    }
+    return false
   }
 })
+// Apply rate limiter - auth routes already bypassed above
 app.use('/api/', limiter)
 
 // CORS with strict origins - More permissive in development
@@ -95,14 +118,34 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // Add request logging for debugging
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/ai')) {
+  if (req.path.startsWith('/api/ai') || req.path.startsWith('/api/auth')) {
     console.log(`📥 ${req.method} ${req.path} from ${req.ip}`)
   }
   next()
 })
 
 // Initialize Security Middleware (after body parsing, before routes)
-initializeSecurityMiddleware(app)
+// Skip security middleware completely in development
+if (process.env.NODE_ENV === 'development') {
+  console.log('⚠️ Development mode: All security middleware disabled')
+  // Add a simple pass-through middleware for development
+  // BUT skip it for auth routes (already bypassed above)
+  app.use(async (req, res, next) => {
+    // Skip security middleware for auth routes
+    if (req.path.startsWith('/api/auth') || req.path.startsWith('/api/ai')) {
+      return next()
+    }
+    // Generate device fingerprint if needed by routes
+    if (!req.deviceFingerprint) {
+      const crypto = await import('crypto')
+      const fingerprint = req.headers['user-agent'] + (req.ip || 'unknown')
+      req.deviceFingerprint = crypto.createHash('sha256').update(fingerprint).digest('hex')
+    }
+    next()
+  })
+} else {
+  initializeSecurityMiddleware(app)
+}
 
 // MongoDB connection
 mongoose
@@ -132,8 +175,9 @@ io.on('connection', (socket) => {
 // Make io available to routes
 app.set('io', io)
 
-// API Routes - AI routes first to avoid security middleware conflicts
-// Add a bypass middleware specifically for AI routes
+// API Routes - Auth routes FIRST (most important)
+app.use('/api/auth', authRoutes)
+// AI routes
 app.use('/api/ai', (req, res, next) => {
   // Log the request
   console.log(`🤖 AI Route: ${req.method} ${req.path} from ${req.ip || req.connection.remoteAddress}`)
@@ -141,7 +185,6 @@ app.use('/api/ai', (req, res, next) => {
   next()
 })
 app.use('/api/ai', aiRoutes)
-app.use('/api/auth', authRoutes)
 app.use('/api/agora', agoraRoutes)
 app.use('/api/files', fileRoutes)
 app.use('/api/share', shareRoutes)

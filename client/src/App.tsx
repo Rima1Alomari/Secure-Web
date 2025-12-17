@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
@@ -19,27 +20,74 @@ import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import { UserProvider } from './contexts/UserContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import RoleBasedRedirect from './components/RoleBasedRedirect'
+import { getToken, isAuthenticated as checkAuth } from './utils/auth'
 
 function App() {
-  // Temporarily disabled authentication for testing
-  // const token = getToken()
-  // const isAuthenticated = !!token
-  const isAuthenticated = true // Always allow access for now
+  const [authChecked, setAuthChecked] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
+
+  useEffect(() => {
+    // Check authentication status on mount
+    const token = getToken()
+    setAuthenticated(!!token)
+    setAuthChecked(true)
+  }, [])
+
+  const handleLogin = () => {
+    setAuthenticated(true)
+  }
+
+  const handleLogout = () => {
+    setAuthenticated(false)
+  }
+
+  // Show loading state while checking authentication
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <ErrorBoundary>
       <UserProvider>
         <Routes>
-          <Route path="/login" element={<Login onLogin={() => {}} />} />
-          <Route path="/register" element={<Register />} />
+          {/* Public routes */}
+          <Route 
+            path="/login" 
+            element={
+              authenticated ? (
+                <RoleBasedRedirect />
+              ) : (
+                <Login onLogin={handleLogin} />
+              )
+            } 
+          />
+          <Route 
+            path="/register" 
+            element={
+              authenticated ? (
+                <RoleBasedRedirect />
+              ) : (
+                <Register />
+              )
+            } 
+          />
           <Route path="/share/:token" element={<SharePage />} />
           
           {/* Protected Routes with Layout */}
           <Route
             path="/*"
             element={
-              <Layout>
-                <Routes>
+              authenticated ? (
+                <Layout onLogout={handleLogout}>
+                  <Routes>
                   {/* User routes: Dashboard, Rooms, Chat, Calendar, Files, Recent, Trash */}
                   <Route 
                     path="/dashboard" 
@@ -127,9 +175,12 @@ function App() {
                   {/* Other routes */}
                   <Route path="/video/:channelName" element={<VideoRoom />} />
                   <Route path="/editor/:fileId" element={<EditorView />} />
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/" element={<RoleBasedRedirect />} />
                 </Routes>
               </Layout>
+              ) : (
+                <Navigate to="/login" replace />
+              )
             }
           />
         </Routes>

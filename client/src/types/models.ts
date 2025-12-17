@@ -16,7 +16,8 @@ export interface Room {
   lastMessage?: string // Last message preview
   lastMessageTime?: string // Timestamp of last message
   unreadCount?: number // Number of unread messages
-  roomLevel?: 'Normal' | 'Confidential' // Room security level
+  roomLevel?: 'Normal' | 'Confidential' | 'Restricted' // Room security level / Data Classification
+  classification?: 'Normal' | 'Confidential' | 'Restricted' // Data Classification Level
   memberIds?: string[] // List of member user IDs
 }
 
@@ -64,6 +65,7 @@ export interface FileItem {
   permissionMode?: 'owner-only' | 'editors' | 'viewers' | 'public'
   editorNames?: string[] // Editor names for display
   viewerNames?: string[] // Viewer names for display
+  classification?: 'Normal' | 'Confidential' | 'Restricted' // Data Classification Level
 }
 
 export interface SecurityLog {
