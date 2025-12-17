@@ -226,6 +226,7 @@ const Administration = () => {
     }
   }
 
+
   const handleSort = (field: keyof AdminUserMock) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
@@ -251,12 +252,16 @@ const Administration = () => {
     <div className="page-content">
       <div className="page-container">
         <div className="page-header">
-          <h1 className="page-title">
-            Administration
-          </h1>
-          <p className="page-subtitle">
-            Manage system and settings
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="page-title">
+                Administration
+              </h1>
+              <p className="page-subtitle">
+                Manage system and settings
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* System Status Strip */}
@@ -834,6 +839,7 @@ const Administration = () => {
           />
         )}
       </div>
+
     </div>
   )
 }

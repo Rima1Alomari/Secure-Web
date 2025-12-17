@@ -99,6 +99,7 @@ const Recent = () => {
     }
   }
 
+
   if (isLoading) {
     return (
       <div className="page-content">
@@ -127,7 +128,9 @@ const Recent = () => {
     <div className="page-content">
       <div className="page-container">
         <div className="page-header">
-          <h1 className="page-title">Recent</h1>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="page-title">Recent</h1>
+          </div>
         </div>
 
         {itemsWithDetails.length === 0 ? (
@@ -178,6 +181,7 @@ const Recent = () => {
           </div>
         )}
       </div>
+
     </div>
   )
 }
