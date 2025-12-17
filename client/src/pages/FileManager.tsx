@@ -4,7 +4,6 @@ import axios from 'axios'
 import { 
   FaDownload, 
   FaEdit, 
-  FaTrash, 
   FaUpload, 
   FaFile,
   FaFilePdf,
@@ -15,14 +14,11 @@ import {
   FaFileAlt,
   FaFolder,
   FaTag,
-  FaStickyNote,
-  FaPlus,
-  FaChevronDown,
-  FaVoteYea
+  FaStickyNote
 } from 'react-icons/fa'
-import { Modal, Toast, ConfirmDialog } from '../components/common'
+import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, nowISO } from '../data/storage'
-import { TRASH_KEY, ROOMS_KEY, FILES_KEY } from '../data/keys'
+import { ROOMS_KEY, FILES_KEY } from '../data/keys'
 import { FileItem, Room } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import { trackFileOpened } from '../utils/recentTracker'
@@ -47,8 +43,6 @@ const FileManager = () => {
   const [showLabelModal, setShowLabelModal] = useState(false)
   const [showInstructionModal, setShowInstructionModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [showNewDropdown, setShowNewDropdown] = useState(false)
   const [showClassificationModal, setShowClassificationModal] = useState(false)
   
   // Form states
@@ -64,7 +58,6 @@ const FileManager = () => {
   
   // File input refs
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const newDropdownRef = useRef<HTMLDivElement>(null)
 
   // Map backend file to FileItem interface
   const mapBackendFileToFileItem = (backendFile: any): FileItem & { _backendId?: string } => {
@@ -195,16 +188,6 @@ const FileManager = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRoomId])
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (newDropdownRef.current && !newDropdownRef.current.contains(event.target as Node)) {
-        setShowNewDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
 
   // Filter files by selected room (if roomId is set, otherwise show all)
   const roomFiles = useMemo(() => {
@@ -541,74 +524,6 @@ const FileManager = () => {
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedFile) return
-
-    setUserActionTriggered(true) // Mark as user action
-    try {
-      const fileId = (selectedFile as any)._backendId || selectedFile.id
-      const token = getToken() || 'mock-token-for-testing'
-      
-      // Skip API call for local files (files with local- prefix)
-      if (fileId && fileId.toString().startsWith('local-')) {
-        // Remove from localStorage
-        const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
-        const updatedFiles = allFiles.filter(f => f.id !== selectedFile.id)
-        setJSON(FILES_KEY, updatedFiles)
-        setFiles(prev => prev.filter(f => f.id !== selectedFile.id))
-        setToast({ message: 'File deleted (local only)', type: 'success' })
-        setShowDeleteConfirm(false)
-        setSelectedFile(null)
-        return
-      }
-      
-      // Skip API call in demo mode
-      if (isDemoMode) {
-        // Remove from localStorage
-        const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
-        const updatedFiles = allFiles.filter(f => f.id !== selectedFile.id)
-        setJSON(FILES_KEY, updatedFiles)
-        setFiles(prev => prev.filter(f => f.id !== selectedFile.id))
-        setToast({ message: 'File deleted (demo mode)', type: 'success' })
-        setShowDeleteConfirm(false)
-        setSelectedFile(null)
-        return
-      }
-      
-      await axios.delete(
-        `${API_URL}/files/${fileId}`,
-        {
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      )
-
-      // Move to trash in localStorage for UI purposes
-      const trashItems = getJSON<any[]>(TRASH_KEY, []) || []
-      setJSON(TRASH_KEY, [...trashItems, {
-        id: selectedFile.id,
-        name: selectedFile.name,
-        type: selectedFile.isFolder ? 'folder' : 'file',
-        size: selectedFile.size,
-        deletedAt: nowISO(),
-        originalPath: selectedFile.path,
-        canRestore: true,
-        ownerId: selectedFile.ownerId,
-        owner: selectedFile.owner,
-      }])
-
-      setFiles(prev => prev.filter(f => f.id !== selectedFile.id))
-      setToast({ message: 'File deleted successfully', type: 'success' })
-      setShowDeleteConfirm(false)
-      setSelectedFile(null)
-    } catch (error: any) {
-      console.error('Error deleting file:', error)
-      setToast({ 
-        message: error.response?.data?.error || 'Failed to delete file', 
-        type: 'error' 
-      })
-    }
-  }
-
   const handleSetLabel = () => {
     if (!selectedFile) return
 
@@ -694,24 +609,6 @@ const FileManager = () => {
 
   const selectedRoom = rooms.find(r => r.id === selectedRoomId)
 
-  const handleCreateDocument = () => {
-    setShowNewDropdown(false)
-    setToast({ message: 'Document creation feature coming soon', type: 'info' })
-    // TODO: Implement document creation
-  }
-
-  const handleCreateNote = () => {
-    setShowNewDropdown(false)
-    setToast({ message: 'Note creation feature coming soon', type: 'info' })
-    // TODO: Implement note creation
-  }
-
-  const handleCreateVote = () => {
-    setShowNewDropdown(false)
-    setToast({ message: 'Vote creation feature coming soon', type: 'info' })
-    // TODO: Implement vote creation
-  }
-
   return (
     <div className="page-content">
       <div className="page-container">
@@ -721,43 +618,6 @@ const FileManager = () => {
               <h1 className="page-title">Files</h1>
             {isAdmin && (
               <div className="flex items-center gap-2">
-                {/* + New Dropdown */}
-                <div className="relative" ref={newDropdownRef}>
-              <button
-                    onClick={() => setShowNewDropdown(!showNewDropdown)}
-                    className="btn-primary flex items-center gap-2"
-                  >
-                    <FaPlus /> New
-                    <FaChevronDown className="text-xs" />
-                  </button>
-                  
-                  {showNewDropdown && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-50">
-                      <button
-                        onClick={handleCreateDocument}
-                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-t-xl"
-                      >
-                        <FaFileAlt className="text-blue-600 dark:text-blue-400" />
-                        <span className="text-gray-900 dark:text-white">Document</span>
-                      </button>
-                      <button
-                        onClick={handleCreateNote}
-                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        <FaStickyNote className="text-yellow-600 dark:text-yellow-400" />
-                        <span className="text-gray-900 dark:text-white">Note</span>
-                      </button>
-                      <button
-                        onClick={handleCreateVote}
-                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-b-xl"
-                      >
-                        <FaVoteYea className="text-green-600 dark:text-green-400" />
-                        <span className="text-gray-900 dark:text-white">Vote</span>
-              </button>
-            </div>
-                  )}
-                </div>
-
                 {/* Upload File Button */}
                 <div className="inline-block">
                   <input {...getInputProps()} ref={fileInputRef} style={{ display: 'none' }} />
@@ -918,16 +778,6 @@ const FileManager = () => {
                               >
                                 <FaStickyNote />
                               </button>
-                          <button
-                            onClick={() => {
-                              setSelectedFile(file)
-                              setShowDeleteConfirm(true)
-                            }}
-                            className="btn-danger px-3 py-1.5"
-                            title="Delete"
-                          >
-                            <FaTrash />
-                          </button>
                         </>
                       )}
                     </div>
@@ -1193,22 +1043,6 @@ const FileManager = () => {
           </div>
         </Modal>
 
-        {/* Delete Confirmation */}
-        {isAdmin && (
-          <ConfirmDialog
-            isOpen={showDeleteConfirm}
-            onCancel={() => {
-              setShowDeleteConfirm(false)
-              setSelectedFile(null)
-            }}
-            onConfirm={handleDelete}
-            title="Delete File"
-            message={`Are you sure you want to delete "${selectedFile?.name}"? This will move it to trash.`}
-            confirmText="Delete"
-            cancelText="Cancel"
-            confirmVariant="danger"
-          />
-        )}
 
         {/* Toast */}
         {toast && (

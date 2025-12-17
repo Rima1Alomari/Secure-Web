@@ -1,8 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { FaTrash, FaUndo, FaFile, FaFolder, FaRobot, FaSpinner, FaExclamationCircle } from 'react-icons/fa'
-import axios from 'axios'
-import { getToken } from '../utils/auth'
-import { Modal } from '../components/common'
+import { FaTrash, FaUndo, FaFile, FaFolder } from 'react-icons/fa'
 import { Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON } from '../data/storage'
 import { FILES_KEY, TRASH_KEY } from '../data/keys'
@@ -19,10 +16,6 @@ const TrashBin = () => {
   const [itemToDelete, setItemToDelete] = useState<TrashItem | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   
-  // AI features state
-  const [showAiRecovery, setShowAiRecovery] = useState(false)
-  const [aiRecoveryPredictions, setAiRecoveryPredictions] = useState<string>('')
-  const [isGeneratingPredictions, setIsGeneratingPredictions] = useState(false)
 
   // Load trash items from localStorage
   useEffect(() => {
@@ -114,33 +107,6 @@ const TrashBin = () => {
     }
   }
 
-  // AI Recovery Predictions
-  const getAIRecoveryPredictions = async () => {
-    if (trashItems.length === 0) {
-      setToast({ message: 'No items in trash to analyze', type: 'info' })
-      return
-    }
-    
-    setShowAiRecovery(true)
-    setAiRecoveryPredictions('')
-    setIsGeneratingPredictions(true)
-    
-    try {
-      const token = getToken() || 'mock-token-for-testing'
-      const response = await axios.post(
-        '/api/ai/recovery-prediction',
-        { files: trashItems },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      
-      setAiRecoveryPredictions(response.data.predictions || 'Unable to generate predictions.')
-    } catch (error: any) {
-      console.error('AI recovery predictions error:', error)
-      setAiRecoveryPredictions('Unable to generate predictions at this time.')
-    } finally {
-      setIsGeneratingPredictions(false)
-    }
-  }
 
   return (
     <div className="page-content">
@@ -149,21 +115,12 @@ const TrashBin = () => {
           <h1 className="page-title">Trash</h1>
           <div className="flex items-center gap-2">
             {trashItems.length > 0 && (
-              <>
-                <button
-                  onClick={getAIRecoveryPredictions}
-                  className="px-3 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white rounded-lg text-sm font-medium transition-all flex items-center gap-2"
-                  title="Get AI recovery predictions"
-                >
-                  <FaRobot /> Recovery Analysis
-                </button>
-                <button
-                  onClick={handleEmptyTrash}
-                  className="btn-danger"
-                >
-                  <FaTrash /> Empty Trash
-                </button>
-              </>
+              <button
+                onClick={handleEmptyTrash}
+                className="btn-danger"
+              >
+                <FaTrash /> Empty Trash
+              </button>
             )}
           </div>
         </div>
@@ -276,51 +233,6 @@ const TrashBin = () => {
         )}
       </div>
 
-      {/* AI Recovery Predictions Modal */}
-      <Modal
-        isOpen={showAiRecovery}
-        onClose={() => {
-          setShowAiRecovery(false)
-          setAiRecoveryPredictions('')
-        }}
-        title="AI Recovery Predictions"
-      >
-        <div className="space-y-4">
-          <div className="bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 p-4 rounded-xl border border-orange-200 dark:border-orange-800">
-            <p className="text-sm text-gray-700 dark:text-gray-300">
-              <FaRobot className="inline mr-2 text-orange-500" />
-              AI analysis of recovery probability for deleted files:
-            </p>
-          </div>
-          <div className="bg-white dark:bg-gray-700 p-4 rounded-xl border border-gray-200 dark:border-gray-600 max-h-96 overflow-y-auto">
-            {isGeneratingPredictions ? (
-              <div className="flex items-center justify-center py-8">
-                <FaSpinner className="animate-spin text-orange-600 dark:text-orange-400 text-2xl" />
-                <span className="ml-3 text-gray-600 dark:text-gray-400">Generating predictions...</span>
-              </div>
-            ) : aiRecoveryPredictions ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{aiRecoveryPredictions}</p>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                No predictions available
-              </div>
-            )}
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => {
-                setShowAiRecovery(false)
-                setAiRecoveryPredictions('')
-              }}
-              className="btn-secondary flex-1"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
