@@ -93,6 +93,11 @@ const resolveUserIdentifiers = async (identifiers) => {
 
 // Helper function to check if user has access to file
 const checkFileAccess = (file, userId, action = 'view', userRoomId = null) => {
+  // In development mode, allow all access
+  if (process.env.NODE_ENV === 'development') {
+    return { allowed: true, reason: 'development_mode' }
+  }
+
   const userIdStr = userId.toString()
   const ownerIdStr = file.owner.toString()
   
@@ -278,23 +283,26 @@ router.post('/direct-upload', authenticate, deviceFingerprint, upload.single('fi
       // Continue with upload even if scanning fails
     }
 
-    if (threats.some(t => t.severity === 'critical')) {
-      // Delete the file if it's a threat
-      fs.unlinkSync(localPath)
-      try {
-        await logAuditEvent('threat_detected', req.user._id?.toString() || 'unknown', 'Critical threat detected in file upload', {
-          fileName,
+    // In development mode, allow all files (skip threat detection blocking)
+    if (process.env.NODE_ENV !== 'development') {
+      if (threats.some(t => t.severity === 'critical')) {
+        // Delete the file if it's a threat
+        fs.unlinkSync(localPath)
+        try {
+          await logAuditEvent('threat_detected', req.user._id?.toString() || 'unknown', 'Critical threat detected in file upload', {
+            fileName,
+            threats,
+            ipAddress: req.ip
+          })
+        } catch (auditError) {
+          console.error('Audit log error (non-fatal):', auditError.message)
+        }
+        return res.status(403).json({ 
+          error: 'File rejected due to security threat',
           threats,
-          ipAddress: req.ip
+          dlpFindings
         })
-      } catch (auditError) {
-        console.error('Audit log error (non-fatal):', auditError.message)
       }
-      return res.status(403).json({ 
-        error: 'File rejected due to security threat',
-        threats,
-        dlpFindings
-      })
     }
 
     // Calculate file hash
@@ -455,17 +463,20 @@ router.post('/complete-upload', authenticate, deviceFingerprint, async (req, res
     const threats = await scanFile(fileBuffer, fileName, fileType)
     const dlpFindings = await scanFileContent(fileBuffer, fileName)
 
-    if (threats.some(t => t.severity === 'critical')) {
-      await logAuditEvent('threat_detected', req.user._id.toString(), 'Critical threat detected in file upload', {
-        fileName,
-        threats,
-        ipAddress: req.ip
-      })
-      return res.status(403).json({ 
-        error: 'File rejected due to security threat',
-        threats,
-        dlpFindings
-      })
+    // In development mode, allow all files (skip threat detection blocking)
+    if (process.env.NODE_ENV !== 'development') {
+      if (threats.some(t => t.severity === 'critical')) {
+        await logAuditEvent('threat_detected', req.user._id.toString(), 'Critical threat detected in file upload', {
+          fileName,
+          threats,
+          ipAddress: req.ip
+        })
+        return res.status(403).json({ 
+          error: 'File rejected due to security threat',
+          threats,
+          dlpFindings
+        })
+      }
     }
 
     // Ensure arrays

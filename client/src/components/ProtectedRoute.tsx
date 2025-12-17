@@ -10,7 +10,7 @@ interface ProtectedRouteProps {
 export default function ProtectedRoute({
   children,
   allowedRoles,
-  redirectTo = '/dashboard',
+  redirectTo,
 }: ProtectedRouteProps) {
   const { role } = useUser()
   const location = useLocation()
@@ -22,8 +22,31 @@ export default function ProtectedRoute({
 
   // Check if user's role is in allowed roles
   if (!allowedRoles.includes(role)) {
-    // Redirect to dashboard or specified redirect path
-    return <Navigate to={redirectTo} state={{ from: location }} replace />
+    // Determine redirect path based on user role
+    let defaultRedirect = '/dashboard' // Default for all users
+    
+    // Redirect based on role
+    switch (role) {
+      case 'admin':
+        defaultRedirect = '/administration'
+        break
+      case 'security':
+        defaultRedirect = '/security'
+        break
+      case 'user':
+      default:
+        defaultRedirect = '/dashboard'
+        break
+    }
+    
+    // Use provided redirectTo or role-based default
+    const finalRedirect = redirectTo || defaultRedirect
+    
+    // Log access denied for debugging
+    console.warn(`Access denied: User with role '${role}' tried to access route that requires: ${allowedRoles.join(', ')}`)
+    
+    // Redirect to appropriate page based on role
+    return <Navigate to={finalRedirect} state={{ from: location }} replace />
   }
 
   return <>{children}</>
