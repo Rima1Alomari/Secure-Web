@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock } from 'react-icons/fa'
+import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus } from 'react-icons/fa'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { ROOMS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
-import { Room, ChatMessage, DirectChat } from '../types/models'
+import { ROOMS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
+import { Room, ChatMessage, DirectChat, AdminUserMock } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 
 type ChatType = 'room' | 'direct'
@@ -15,6 +15,7 @@ const Chat = () => {
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [dmSearchQuery, setDmSearchQuery] = useState('')
 
   // Get rooms
   const rooms = useMemo(() => {
@@ -26,11 +27,15 @@ const Chat = () => {
     return getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
   }, [refreshKey])
 
+  // Get all users for search
+  const allUsers = useMemo(() => {
+    return getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+  }, [])
+
   // Get direct chats (simple implementation)
   const directChats = useMemo(() => {
     if (!user?.id) return []
     
-    const chats: DirectChat[] = []
     const chatMap = new Map<string, DirectChat>()
     
     // Find all direct messages (messages without roomId but with recipientId)
@@ -70,6 +75,35 @@ const Chat = () => {
       new Date(b.lastMessageTime || '').getTime() - new Date(a.lastMessageTime || '').getTime()
     )
   }, [allMessages, user?.id])
+
+  // Filter direct chats by search query
+  const filteredDirectChats = useMemo(() => {
+    if (!dmSearchQuery.trim()) return directChats
+    
+    const query = dmSearchQuery.toLowerCase()
+    return directChats.filter(chat => 
+      chat.userName.toLowerCase().includes(query) ||
+      chat.userId.toLowerCase().includes(query)
+    )
+  }, [directChats, dmSearchQuery])
+
+  // Get filtered users for "Start chat" when no DM exists
+  const filteredUsersForChat = useMemo(() => {
+    if (!dmSearchQuery.trim() || directChats.length > 0) return []
+    
+    const query = dmSearchQuery.toLowerCase()
+    return allUsers
+      .filter(u => u.id !== user?.id && (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query)))
+      .slice(0, 10) // Limit to 10 results
+  }, [allUsers, dmSearchQuery, directChats.length, user?.id])
+
+  const handleStartChat = (targetUserId: string, targetUserName: string) => {
+    if (!user?.id) return
+    
+    const chatId = [user.id, targetUserId].sort().join('-')
+    setSelectedChat({ type: 'direct', id: chatId, name: targetUserName })
+    setDmSearchQuery('')
+  }
 
   // Load messages for selected chat
   useEffect(() => {
@@ -191,13 +225,13 @@ const Chat = () => {
           {/* Chat List Sidebar */}
           <div className="w-80 border-r border-gray-200 dark:border-gray-700 flex flex-col">
             {/* Room Chats Section */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-400 uppercase tracking-wide mb-3">
+            <div className="p-3 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-[11px] font-semibold text-gray-700 dark:text-gray-400 uppercase tracking-[0.08em] opacity-70 mb-2">
                 Rooms
               </h3>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
+              <div className="space-y-1 max-h-64 overflow-y-auto">
                 {roomChats.length === 0 ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-500 text-center py-4">
+                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
                     No rooms
                   </p>
                 ) : (
@@ -205,33 +239,39 @@ const Chat = () => {
                     <button
                       key={room.id}
                       onClick={() => setSelectedChat({ type: 'room', id: room.id, name: room.name })}
-                      className={`w-full text-left p-3 rounded-lg transition-all duration-200 ${
+                      className={`w-full text-left p-2.5 rounded-lg transition-colors relative ${
                         selectedChat?.type === 'room' && selectedChat.id === room.id
-                          ? 'bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-500 dark:border-blue-400'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-transparent'
+                          ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500 dark:border-blue-400'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
                       }`}
                     >
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-0.5">
                         {room.isPrivate ? (
-                          <FaLock className="text-gray-500 dark:text-gray-400 text-xs flex-shrink-0" />
+                          <FaLock className="text-gray-500 dark:text-gray-400 text-[10px] flex-shrink-0" />
                         ) : (
-                          <FaUnlock className="text-gray-500 dark:text-gray-400 text-xs flex-shrink-0" />
+                          <FaUnlock className="text-gray-500 dark:text-gray-400 text-[10px] flex-shrink-0" />
                         )}
-                        <h4 className="font-semibold text-gray-900 dark:text-white truncate flex-1">
+                        <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate flex-1">
                           {room.name}
                         </h4>
                         {room.unreadCount > 0 && (
-                          <span className="flex-shrink-0 px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full">
+                          <span className="flex-shrink-0 px-1.5 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full ml-auto">
                             {room.unreadCount}
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                        {room.lastMessage}
-                      </p>
-                      <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
-                        {formatTimeAgo(room.lastMessageTime || room.updatedAt)}
-                      </p>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-500">
+                        <p className="truncate flex-1">
+                          {room.lastMessage}
+                        </p>
+                        <span className="text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0">
+                          {(() => {
+                            const time = room.lastMessageTime || room.updatedAt
+                            const timeStr = typeof time === 'string' ? time : new Date(time).toISOString()
+                            return formatTimeAgo(timeStr)
+                          })()}
+                        </span>
+                      </div>
                     </button>
                   ))
                 )}
@@ -239,53 +279,100 @@ const Chat = () => {
             </div>
 
             {/* Direct Chats Section */}
-            <div className="p-4 flex-1 overflow-y-auto">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-400 uppercase tracking-wide mb-3">
+            <div className="p-3 flex-1 overflow-y-auto flex flex-col">
+              <h3 className="text-[11px] font-semibold text-gray-700 dark:text-gray-400 uppercase tracking-[0.08em] opacity-70 mb-2">
                 Direct Messages
               </h3>
-              <div className="space-y-2">
-                {directChats.length === 0 ? (
-                  <p className="text-sm text-gray-500 dark:text-gray-500 text-center py-4">
-                    No direct messages
+              
+              {/* Search Input */}
+              <div className="mb-2">
+                <div className="relative">
+                  <FaSearch className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs" />
+                  <input
+                    type="text"
+                    value={dmSearchQuery}
+                    onChange={(e) => setDmSearchQuery(e.target.value)}
+                    placeholder="Search users…"
+                    className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1 flex-1 overflow-y-auto">
+                {filteredDirectChats.length === 0 && filteredUsersForChat.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
+                    {dmSearchQuery.trim() ? 'No users found' : 'No direct messages'}
                   </p>
                 ) : (
-                  directChats.map((chat) => (
-                    <button
-                      key={chat.id}
-                      onClick={() => setSelectedChat({ type: 'direct', id: chat.id, name: chat.userName })}
-                      className={`w-full text-left p-3 rounded-lg transition-all duration-200 ${
-                        selectedChat?.type === 'direct' && selectedChat.id === chat.id
-                          ? 'bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-500 dark:border-blue-400'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                          <FaUser className="text-white text-xs" />
-                        </div>
-                        <h4 className="font-semibold text-gray-900 dark:text-white truncate flex-1">
-                          {chat.userName}
-                        </h4>
-                        {chat.unreadCount && chat.unreadCount > 0 && (
-                          <span className="flex-shrink-0 px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full">
-                            {chat.unreadCount}
-                          </span>
-                        )}
-                      </div>
-                      {chat.lastMessage && (
-                        <>
-                          <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                            {chat.lastMessage}
-                          </p>
-                          {chat.lastMessageTime && (
-                            <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
-                              {formatTimeAgo(chat.lastMessageTime)}
-                            </p>
+                  <>
+                    {/* Existing Direct Chats */}
+                    {filteredDirectChats.map((chat) => (
+                      <button
+                        key={chat.id}
+                        onClick={() => setSelectedChat({ type: 'direct', id: chat.id, name: chat.userName })}
+                        className={`w-full text-left p-2.5 rounded-lg transition-colors relative ${
+                          selectedChat?.type === 'direct' && selectedChat.id === chat.id
+                            ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500 dark:border-blue-400'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <div className="w-7 h-7 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                            <FaUser className="text-white text-[10px]" />
+                          </div>
+                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate flex-1">
+                            {chat.userName}
+                          </h4>
+                          {chat.unreadCount && chat.unreadCount > 0 && (
+                            <span className="flex-shrink-0 px-1.5 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full ml-auto">
+                              {chat.unreadCount}
+                            </span>
                           )}
-                        </>
-                      )}
-                    </button>
-                  ))
+                        </div>
+                        {chat.lastMessage && (
+                          <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-500">
+                            <p className="truncate flex-1">
+                              {chat.lastMessage}
+                            </p>
+                            {chat.lastMessageTime && (
+                              <span className="text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0">
+                                {formatTimeAgo(chat.lastMessageTime)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+
+                    {/* Users to Start Chat With (when no DM exists) */}
+                    {filteredUsersForChat.length > 0 && (
+                      <>
+                        {filteredDirectChats.length > 0 && (
+                          <div className="border-t border-gray-200 dark:border-gray-700 my-2"></div>
+                        )}
+                        {filteredUsersForChat.map((userItem) => (
+                          <button
+                            key={userItem.id}
+                            onClick={() => handleStartChat(userItem.id, userItem.name)}
+                            className="w-full text-left p-2.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2"
+                          >
+                            <div className="w-7 h-7 bg-green-600 dark:bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+                              <FaUser className="text-white text-[10px]" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                                {userItem.name}
+                              </h4>
+                              <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                                {userItem.email}
+                              </p>
+                            </div>
+                            <FaPlus className="text-blue-600 dark:text-blue-400 text-xs flex-shrink-0" />
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </>
                 )}
               </div>
             </div>

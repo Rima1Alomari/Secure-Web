@@ -9,6 +9,7 @@ export default defineConfig({
   plugins: [react()],
   root: __dirname,
   server: {
+    host: '0.0.0.0',
     port: 3000,
     strictPort: false,
     hmr: {
@@ -16,8 +17,9 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:5001',
-        changeOrigin: true
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false
       }
     }
   },

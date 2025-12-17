@@ -1,4 +1,4 @@
-import { ReactNode, useState, useMemo } from 'react'
+import { ReactNode, useState, useMemo, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { 
   FaVideo, 
@@ -26,6 +26,7 @@ import GlobalSearch from './GlobalSearch'
 import NotificationsCenter from './NotificationsCenter'
 import { useUser, UserRole } from '../contexts/UserContext'
 import RoleSwitcher from './RoleSwitcher'
+import { getJSON } from '../data/storage'
 
 interface LayoutProps {
   children: ReactNode
@@ -39,6 +40,30 @@ export default function Layout({ children }: LayoutProps) {
   const [isDark, setIsDark] = useState(() => {
     return document.documentElement.classList.contains('dark')
   })
+  
+  // Get uploaded logo from settings
+  const [logoUrl, setLogoUrl] = useState<string | null>(() => {
+    const settings = getJSON<{ logoUrl?: string }>('admin-theme-settings', null)
+    return settings?.logoUrl || null
+  })
+  
+  // Listen for logo updates
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const settings = getJSON<{ logoUrl?: string }>('admin-theme-settings', null)
+      setLogoUrl(settings?.logoUrl || null)
+    }
+    
+    // Listen for custom event (when logo is updated in Administration)
+    window.addEventListener('logo-updated', handleStorageChange)
+    // Also listen for storage events (in case of cross-tab updates)
+    window.addEventListener('storage', handleStorageChange)
+    
+    return () => {
+      window.removeEventListener('logo-updated', handleStorageChange)
+      window.removeEventListener('storage', handleStorageChange)
+    }
+  }, [])
 
   const handleLogout = () => {
     // Temporarily disabled - just navigate to dashboard
@@ -80,18 +105,36 @@ export default function Layout({ children }: LayoutProps) {
           <div className="flex items-center gap-3 justify-between">
             {!isSidebarCollapsed && (
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20">
-                  <FaShieldAlt className="text-white text-xl" />
-                </div>
+                {logoUrl ? (
+                  <img 
+                    src={logoUrl} 
+                    alt="Logo" 
+                    className="w-12 h-12 rounded-xl object-contain"
+                  />
+                ) : (
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20">
+                    <FaShieldAlt className="text-white text-xl" />
+                  </div>
+                )}
                 <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent tracking-tight">
                   Secure Web
                 </h1>
               </div>
             )}
             {isSidebarCollapsed && (
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20 mx-auto">
-                <FaShieldAlt className="text-white text-xl" />
-              </div>
+              <>
+                {logoUrl ? (
+                  <img 
+                    src={logoUrl} 
+                    alt="Logo" 
+                    className="w-12 h-12 rounded-xl object-contain mx-auto"
+                  />
+                ) : (
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20 mx-auto">
+                    <FaShieldAlt className="text-white text-xl" />
+                  </div>
+                )}
+              </>
             )}
             <button
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -186,9 +229,17 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex justify-between items-center gap-2">
                 {/* Mobile Logo */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className="w-9 h-9 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20">
-                    <FaShieldAlt className="text-white text-base" />
-                  </div>
+                  {logoUrl ? (
+                    <img 
+                      src={logoUrl} 
+                      alt="Logo" 
+                      className="w-9 h-9 rounded-xl object-contain"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 bg-gradient-to-br from-blue-600 via-blue-500 to-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-500/20">
+                      <FaShieldAlt className="text-white text-base" />
+                    </div>
+                  )}
                   <h1 className="text-lg font-bold bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 bg-clip-text text-transparent tracking-tight">
                     Secure Web
                   </h1>

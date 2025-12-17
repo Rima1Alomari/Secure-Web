@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
-import { FaUsers, FaCog, FaShieldAlt, FaDatabase, FaKey, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle } from 'react-icons/fa'
+import { useSearchParams } from 'react-router-dom'
+import { FaUsers, FaCog, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle, FaUpload, FaTimes } from 'react-icons/fa'
 import TableSkeleton from '../components/TableSkeleton'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
@@ -7,7 +8,20 @@ import { ADMIN_USERS_KEY, SECURITY_LOGS_KEY, FILES_KEY, SECURITY_SETTINGS_KEY, E
 import { AdminUserMock, SecurityLog } from '../types/models'
 
 const Administration = () => {
-  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'security' | 'database'>('users')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  
+  // Validate tab parameter and redirect invalid ones
+  useEffect(() => {
+    if (tabParam && tabParam !== 'teams' && tabParam !== 'settings') {
+      setSearchParams({ tab: 'teams' })
+      setActiveTab('teams')
+    } else if (tabParam === 'teams' || tabParam === 'settings') {
+      setActiveTab(tabParam)
+    }
+  }, [tabParam, setSearchParams])
+  
+  const [activeTab, setActiveTab] = useState<'teams' | 'settings'>('teams')
   const [backendConnected] = useState(false) // Demo mode
   const [selectedRowMenu, setSelectedRowMenu] = useState<string | null>(null)
   const [users, setUsers] = useState<AdminUserMock[]>([])
@@ -16,9 +30,11 @@ const Administration = () => {
   const [editingUser, setEditingUser] = useState<AdminUserMock | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
   const [themeSettings, setThemeSettings] = useState(() => {
-    const saved = getJSON<{ logoColor: string; sidebarColor: string }>('admin-theme-settings', null)
-    return saved || { logoColor: 'blue', sidebarColor: 'blue' }
+    const saved = getJSON<{ logoColor: string; sidebarColor: string; logoUrl?: string }>('admin-theme-settings', null)
+    return saved || { logoColor: 'blue', sidebarColor: 'blue', logoUrl: undefined }
   })
+  
+  const [logoPreview, setLogoPreview] = useState<string | null>(themeSettings.logoUrl || null)
   
   const [newUser, setNewUser] = useState({
     name: '',
@@ -28,11 +44,60 @@ const Administration = () => {
   })
 
   const tabs = [
-    { id: 'users', label: 'Users', icon: FaUsers },
-    { id: 'settings', label: 'Settings', icon: FaCog },
-    { id: 'security', label: 'Security', icon: FaShieldAlt },
-    { id: 'database', label: 'Database', icon: FaDatabase }
+    { id: 'teams', label: 'Teams', icon: FaUsers },
+    { id: 'settings', label: 'Settings', icon: FaCog }
   ]
+  
+  const handleTabChange = (tabId: 'teams' | 'settings') => {
+    setActiveTab(tabId)
+    setSearchParams({ tab: tabId })
+  }
+  
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    // Validate file type
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml']
+    if (!validTypes.includes(file.type)) {
+      setToast({ message: 'Invalid file type. Please upload PNG, JPG, or SVG.', type: 'error' })
+      return
+    }
+    
+    // Validate file size (max 2MB)
+    const maxSize = 2 * 1024 * 1024 // 2MB
+    if (file.size > maxSize) {
+      setToast({ message: 'File size exceeds 2MB limit.', type: 'error' })
+      return
+    }
+    
+    // Read file and convert to base64
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const base64String = reader.result as string
+      setLogoPreview(base64String)
+      const updatedSettings = { ...themeSettings, logoUrl: base64String }
+      setThemeSettings(updatedSettings)
+      setJSON('admin-theme-settings', updatedSettings)
+      // Dispatch custom event to update logo in Layout
+      window.dispatchEvent(new Event('logo-updated'))
+      setToast({ message: 'Logo uploaded successfully', type: 'success' })
+    }
+    reader.onerror = () => {
+      setToast({ message: 'Error reading file', type: 'error' })
+    }
+    reader.readAsDataURL(file)
+  }
+  
+  const handleRemoveLogo = () => {
+    setLogoPreview(null)
+    const updatedSettings = { ...themeSettings, logoUrl: undefined }
+    setThemeSettings(updatedSettings)
+    setJSON('admin-theme-settings', updatedSettings)
+    // Dispatch custom event to update logo in Layout
+    window.dispatchEvent(new Event('logo-updated'))
+    setToast({ message: 'Logo removed', type: 'info' })
+  }
 
   // Load users from localStorage
   useEffect(() => {
@@ -226,7 +291,7 @@ const Administration = () => {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => handleTabChange(tab.id as 'teams' | 'settings')}
                     className={`relative px-4 py-3 text-sm font-medium transition-all flex items-center gap-2 ${
                       activeTab === tab.id
                         ? 'text-blue-600 dark:text-blue-400'
@@ -248,7 +313,7 @@ const Administration = () => {
 
           {/* Tab Content */}
           <div className="p-6">
-            {activeTab === 'users' && (
+            {activeTab === 'teams' && (
               <div>
                 {isLoading ? (
                   <TableSkeleton rows={5} columns={5} />
@@ -256,7 +321,7 @@ const Administration = () => {
                   <>
                     <div className="flex justify-between items-center mb-6">
                       <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                        User Management
+                        Team Management
                       </h2>
                       <button 
                         onClick={() => setShowAddUserModal(true)}
@@ -279,7 +344,7 @@ const Administration = () => {
                         setSearchQuery(e.target.value)
                         setCurrentPage(1) // Reset to first page on search
                       }}
-                      placeholder="Search by name, email, role, or status..."
+                      placeholder="Search teams, members, role…"
                       className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:focus:ring-blue-400 dark:focus:border-blue-400 transition-all duration-200 text-sm"
                     />
                   </div>
@@ -463,6 +528,57 @@ const Administration = () => {
                     </p>
                     
                     <div className="space-y-4">
+                      {/* Upload Logo Section */}
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                          Upload Logo
+                        </label>
+                        <div className="space-y-3">
+                          {logoPreview ? (
+                            <div className="flex items-center gap-4">
+                              <div className="relative">
+                                <img 
+                                  src={logoPreview} 
+                                  alt="Logo preview" 
+                                  className="w-20 h-20 rounded-lg object-contain border-2 border-gray-200 dark:border-gray-700"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                                  Logo uploaded
+                                </p>
+                                <button
+                                  onClick={handleRemoveLogo}
+                                  className="btn-secondary text-sm flex items-center gap-2"
+                                >
+                                  <FaTimes /> Remove Logo
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="cursor-pointer">
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/jpg,image/svg+xml"
+                                  onChange={handleLogoUpload}
+                                  className="hidden"
+                                />
+                                <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors">
+                                  <FaUpload className="text-gray-400 dark:text-gray-500 text-2xl mx-auto mb-2" />
+                                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                                    Click to upload or drag and drop
+                                  </p>
+                                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                                    PNG, JPG, SVG (max 2MB)
+                                  </p>
+                                </div>
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                           Logo Color
@@ -533,144 +649,6 @@ const Administration = () => {
               </div>
             )}
 
-            {activeTab === 'security' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-                  Security Logs
-                </h2>
-                <div className="space-y-4">
-                  <div className="card">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                      Last Scan Logs
-                    </h3>
-                    {(() => {
-                      const securityLogs = getJSON<SecurityLog[]>(SECURITY_LOGS_KEY, []) || []
-                      const recentLogs = securityLogs.slice(0, 10).reverse()
-                      
-                      if (recentLogs.length === 0) {
-                        return (
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            No security scan logs available. Run a scan from the Security Center.
-                          </p>
-                        )
-                      }
-                      
-                      return (
-                        <div className="space-y-2">
-                          {recentLogs.map(log => (
-                            <div
-                              key={log.id}
-                              className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {log.event}
-                                  </p>
-                                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                    {log.source} • {new Date(log.timestamp).toLocaleString()}
-                                  </p>
-                                </div>
-                                <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                                  log.severity === 'critical' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
-                                  log.severity === 'high' ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' :
-                                  log.severity === 'medium' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300' :
-                                  'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                                }`}>
-                                  {log.severity}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'database' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-                  Database Management
-                </h2>
-                <div className="space-y-6">
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <div className="card">
-                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">1.2 GB</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400">
-                        Database Size
-                      </div>
-                    </div>
-                    <div className="card">
-                      <div className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">99.9%</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400">
-                        Uptime
-                      </div>
-                    </div>
-                    <div className="card">
-                      <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mb-1">24/7</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400">
-                        Monitoring
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="card">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                      Mock DB Status
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                        <span className="text-sm text-gray-900 dark:text-white">Connection Status</span>
-                        <span className="text-sm font-semibold text-green-600 dark:text-green-400">Connected</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                        <span className="text-sm text-gray-900 dark:text-white">Active Queries</span>
-                        <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">12</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                        <span className="text-sm text-gray-900 dark:text-white">Cache Hit Rate</span>
-                        <span className="text-sm font-semibold text-purple-600 dark:text-purple-400">94.5%</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="card">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                      Export Data
-                    </h3>
-                    <button
-                      onClick={() => {
-                        const allData = {
-                          users: getJSON(ADMIN_USERS_KEY, []),
-                          files: getJSON(FILES_KEY, []),
-                          securityLogs: getJSON(SECURITY_LOGS_KEY, []),
-                          settings: getJSON(SECURITY_SETTINGS_KEY, {}),
-                          exportedAt: nowISO()
-                        }
-                        const dataStr = JSON.stringify(allData, null, 2)
-                        const dataBlob = new Blob([dataStr], { type: 'application/json' })
-                        const url = URL.createObjectURL(dataBlob)
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.download = `database-export-${new Date().toISOString().split('T')[0]}.json`
-                        document.body.appendChild(link)
-                        link.click()
-                        document.body.removeChild(link)
-                        URL.revokeObjectURL(url)
-                        setToast({ message: 'Database exported successfully', type: 'success' })
-                      }}
-                      className="btn-primary"
-                    >
-                      <FaDownload className="text-sm" />
-                      Export JSON
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
 
           </div>
         </div>

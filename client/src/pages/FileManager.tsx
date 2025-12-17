@@ -15,17 +15,20 @@ import {
   FaFileAlt,
   FaFolder,
   FaTag,
-  FaStickyNote
+  FaStickyNote,
+  FaPlus,
+  FaChevronDown,
+  FaVoteYea
 } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, nowISO } from '../data/storage'
-import { TRASH_KEY, ROOMS_KEY } from '../data/keys'
+import { TRASH_KEY, ROOMS_KEY, FILES_KEY } from '../data/keys'
 import { FileItem, Room } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import { trackFileOpened } from '../utils/recentTracker'
 import { getToken } from '../utils/auth'
 
-const API_URL = import.meta.env.VITE_API_URL || '/api'
+const API_URL = (import.meta as any).env.VITE_API_URL || '/api'
 
 const FileManager = () => {
   const { role, user } = useUser()
@@ -34,8 +37,10 @@ const FileManager = () => {
   const [files, setFiles] = useState<FileItem[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [selectedRoomId, setSelectedRoomId] = useState<string>('all')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
+  const [isDemoMode, setIsDemoMode] = useState(false)
+  const [userActionTriggered, setUserActionTriggered] = useState(false)
   
   // Modal states
   const [showRenameModal, setShowRenameModal] = useState(false)
@@ -43,6 +48,7 @@ const FileManager = () => {
   const [showInstructionModal, setShowInstructionModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showNewDropdown, setShowNewDropdown] = useState(false)
   
   // Form states
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
@@ -52,7 +58,7 @@ const FileManager = () => {
   
   // File input refs
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const fileInputRef2 = useRef<HTMLInputElement>(null)
+  const newDropdownRef = useRef<HTMLDivElement>(null)
 
   // Map backend file to FileItem interface
   const mapBackendFileToFileItem = (backendFile: any): FileItem & { _backendId?: string } => {
@@ -81,21 +87,69 @@ const FileManager = () => {
     }
   }
 
-  // Load files from API and rooms from localStorage
+  // Detect demo mode (check if backend is disconnected)
   useEffect(() => {
-    const fetchFiles = async () => {
+    // Check if we're in demo mode by attempting a lightweight API call
+    // or by checking environment/localStorage
+    const checkDemoMode = async () => {
       try {
-        setLoading(true)
         const token = getToken() || 'mock-token-for-testing'
-        const response = await axios.get(`${API_URL}/files`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        
-        const backendFiles = response.data || []
-        const mappedFiles = backendFiles.map(mapBackendFileToFileItem)
-        setFiles(mappedFiles)
-      } catch (error: any) {
-        console.error('Error fetching files:', error)
+        // Try a lightweight health check or just assume demo mode if token is mock
+        if (token === 'mock-token-for-testing') {
+          setIsDemoMode(true)
+          return
+        }
+        // Optional: Try a health check endpoint if available
+        // For now, we'll detect demo mode based on token
+        setIsDemoMode(false)
+      } catch {
+        setIsDemoMode(true)
+      }
+    }
+    checkDemoMode()
+  }, [])
+
+  // Load rooms from localStorage on mount (no API call)
+  useEffect(() => {
+    const savedRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
+    setRooms(savedRooms)
+    // Load files from localStorage as fallback
+    const localFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+    if (localFiles.length > 0) {
+      setFiles(localFiles)
+    }
+  }, [])
+
+  // Fetch files function (called explicitly, not on mount)
+  const fetchFiles = async (showErrors = false) => {
+    // Skip API call in demo mode
+    if (isDemoMode) {
+      const localFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+      setFiles(localFiles)
+      setLoading(false)
+      return
+    }
+
+    try {
+      setLoading(true)
+      const token = getToken() || 'mock-token-for-testing'
+      const response = await axios.get(`${API_URL}/files`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      const backendFiles = response.data || []
+      const mappedFiles = backendFiles.map(mapBackendFileToFileItem)
+      setFiles(mappedFiles)
+    } catch (error: any) {
+      console.error('Error fetching files:', error)
+      
+      // Only show error toast if:
+      // 1. User explicitly triggered the action (showErrors = true)
+      // 2. Error is NOT a 403 on page entry (userActionTriggered = true)
+      const is403 = error.response?.status === 403
+      const shouldShowError = showErrors && (userActionTriggered || !is403)
+      
+      if (shouldShowError) {
         const errorMessage = error.response?.data?.error || 
                             error.message || 
                             'Failed to load files. Make sure the server and database are running.'
@@ -103,16 +157,47 @@ const FileManager = () => {
           message: errorMessage, 
           type: 'error' 
         })
-        setFiles([])
-      } finally {
-        setLoading(false)
+      } else if (is403 && !userActionTriggered) {
+        // Silent console warning for 403 on page entry
+        console.warn('Files API returned 403. Running in demo mode. Use localStorage files.')
+        setIsDemoMode(true)
+      }
+      
+      // Fallback to localStorage files
+      const localFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+      setFiles(localFiles)
+    } finally {
+      setLoading(false)
+      setUserActionTriggered(false)
+    }
+  }
+
+  // Fetch files when room is selected (if not demo mode and not initial mount)
+  useEffect(() => {
+    // Only fetch if room is explicitly selected (not 'all' and not initial mount)
+    if (selectedRoomId !== 'all' && !isDemoMode) {
+      setUserActionTriggered(true)
+      fetchFiles(true)
+    } else if (selectedRoomId !== 'all' && isDemoMode) {
+      // In demo mode, just filter localStorage files
+      const localFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+      const filtered = localFiles.filter(file => 
+        file.roomId === selectedRoomId || file.sharedWith?.includes(selectedRoomId)
+      )
+      setFiles(filtered.length > 0 ? filtered : localFiles)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRoomId])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (newDropdownRef.current && !newDropdownRef.current.contains(event.target as Node)) {
+        setShowNewDropdown(false)
       }
     }
-
-    const savedRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-    setRooms(savedRooms)
-    
-    fetchFiles()
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   // Filter files by selected room (if roomId is set, otherwise show all)
@@ -126,7 +211,7 @@ const FileManager = () => {
     return filtered.length > 0 ? filtered : files
   }, [files, selectedRoomId])
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getInputProps } = useDropzone({
     onDrop: async (acceptedFiles: globalThis.File[]) => {
       if (!isAdmin) {
         setToast({ message: 'Only admins can upload files', type: 'error' })
@@ -146,8 +231,34 @@ const FileManager = () => {
   })
 
   const uploadFile = async (file: globalThis.File) => {
+    setUserActionTriggered(true) // Mark as user action
     try {
       const token = getToken() || 'mock-token-for-testing'
+      
+      // Skip API call in demo mode
+      if (isDemoMode) {
+        // Save to localStorage
+        const newFileItem: FileItem = {
+          id: `local-${Date.now()}-${file.name}`,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          uploadedAt: nowISO(),
+          owner: user?.name || 'You',
+          ownerId: user?.id,
+          roomId: selectedRoomId !== 'all' ? selectedRoomId : undefined,
+          isTrashed: false,
+          isFolder: false
+        }
+        const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+        setJSON(FILES_KEY, [...allFiles, newFileItem])
+        setFiles(prev => [...prev, newFileItem])
+        setToast({ 
+          message: `File "${file.name}" uploaded successfully (demo mode)`, 
+          type: 'success' 
+        })
+        return
+      }
       
       // Try to get upload URL first (checks if S3 is configured)
       try {
@@ -209,6 +320,7 @@ const FileManager = () => {
       }
     } catch (error: any) {
       console.error('Error uploading file:', error)
+      // Always show error for upload failures (user action)
       setToast({ 
         message: error.response?.data?.error || 'Failed to upload file', 
         type: 'error' 
@@ -362,9 +474,23 @@ const FileManager = () => {
   const handleDelete = async () => {
     if (!selectedFile) return
 
+    setUserActionTriggered(true) // Mark as user action
     try {
       const fileId = (selectedFile as any)._backendId || selectedFile.id
       const token = getToken() || 'mock-token-for-testing'
+      
+      // Skip API call in demo mode
+      if (isDemoMode) {
+        // Remove from localStorage
+        const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+        const updatedFiles = allFiles.filter(f => f.id !== selectedFile.id)
+        setJSON(FILES_KEY, updatedFiles)
+        setFiles(prev => prev.filter(f => f.id !== selectedFile.id))
+        setToast({ message: 'File deleted (demo mode)', type: 'success' })
+        setShowDeleteConfirm(false)
+        setSelectedFile(null)
+        return
+      }
       
       await axios.delete(
         `${API_URL}/files/${fileId}`,
@@ -472,6 +598,24 @@ const FileManager = () => {
 
   const selectedRoom = rooms.find(r => r.id === selectedRoomId)
 
+  const handleCreateDocument = () => {
+    setShowNewDropdown(false)
+    setToast({ message: 'Document creation feature coming soon', type: 'info' })
+    // TODO: Implement document creation
+  }
+
+  const handleCreateNote = () => {
+    setShowNewDropdown(false)
+    setToast({ message: 'Note creation feature coming soon', type: 'info' })
+    // TODO: Implement note creation
+  }
+
+  const handleCreateVote = () => {
+    setShowNewDropdown(false)
+    setToast({ message: 'Vote creation feature coming soon', type: 'info' })
+    // TODO: Implement vote creation
+  }
+
   return (
     <div className="page-content">
       <div className="page-container">
@@ -480,22 +624,62 @@ const FileManager = () => {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h1 className="page-title">Files</h1>
             {isAdmin && (
-              <div className="inline-block">
-                <input {...getInputProps()} ref={fileInputRef} style={{ display: 'none' }} />
-                <button 
-                  type="button"
-                  className="btn-primary cursor-pointer"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    // Trigger file input click
-                    if (fileInputRef.current) {
-                      fileInputRef.current.click()
-                    }
-                  }}
-                >
-                  <FaUpload /> Upload File
-                </button>
+              <div className="flex items-center gap-2">
+                {/* + New Dropdown */}
+                <div className="relative" ref={newDropdownRef}>
+                  <button
+                    onClick={() => setShowNewDropdown(!showNewDropdown)}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <FaPlus /> New
+                    <FaChevronDown className="text-xs" />
+                  </button>
+                  
+                  {showNewDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-50">
+                      <button
+                        onClick={handleCreateDocument}
+                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-t-xl"
+                      >
+                        <FaFileAlt className="text-blue-600 dark:text-blue-400" />
+                        <span className="text-gray-900 dark:text-white">Document</span>
+                      </button>
+                      <button
+                        onClick={handleCreateNote}
+                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <FaStickyNote className="text-yellow-600 dark:text-yellow-400" />
+                        <span className="text-gray-900 dark:text-white">Note</span>
+                      </button>
+                      <button
+                        onClick={handleCreateVote}
+                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-b-xl"
+                      >
+                        <FaVoteYea className="text-green-600 dark:text-green-400" />
+                        <span className="text-gray-900 dark:text-white">Vote</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Upload File Button */}
+                <div className="inline-block">
+                  <input {...getInputProps()} ref={fileInputRef} style={{ display: 'none' }} />
+                  <button 
+                    type="button"
+                    className="btn-secondary cursor-pointer"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      // Trigger file input click
+                      if (fileInputRef.current) {
+                        fileInputRef.current.click()
+                      }
+                    }}
+                  >
+                    <FaUpload /> Upload File
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -526,25 +710,6 @@ const FileManager = () => {
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <FaFile className="text-4xl mx-auto mb-3 opacity-50" />
               <p>No files {selectedRoomId !== 'all' && selectedRoom ? `in ${selectedRoom.name}` : 'available'}</p>
-              {isAdmin && (
-                <div className="mt-4 inline-block">
-                  <input {...getInputProps()} ref={fileInputRef2} style={{ display: 'none' }} />
-                  <button 
-                    type="button"
-                    className="btn-primary cursor-pointer"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      // Trigger file input click
-                      if (fileInputRef2.current) {
-                        fileInputRef2.current.click()
-                      }
-                    }}
-                  >
-                    Upload First File
-                  </button>
-                </div>
-              )}
             </div>
           ) : (
             <div className="space-y-3">

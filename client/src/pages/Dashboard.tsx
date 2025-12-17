@@ -5,32 +5,23 @@ import {
   FaCalendarAlt, 
   FaFile, 
   FaChevronRight,
-  FaPlus,
-  FaUpload,
   FaDownload,
-  FaCircle,
   FaChevronDown,
   FaChevronUp
 } from 'react-icons/fa'
-import { Modal, Toast } from '../components/common'
-import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
+import { Toast } from '../components/common'
+import { getJSON } from '../data/storage'
 import { ROOMS_KEY, EVENTS_KEY, FILES_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
 import { Room, EventItem, FileItem, ChatMessage } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const { role } = useUser()
+  const { } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   
   // Modal states
-  const [showCreateRoomModal, setShowCreateRoomModal] = useState(false)
-  const [showNewEventModal, setShowNewEventModal] = useState(false)
   const [expandedFileId, setExpandedFileId] = useState<string | null>(null)
-  
-  // Form states
-  const [newRoom, setNewRoom] = useState({ name: '', description: '', isPrivate: false })
-  const [newEvent, setNewEvent] = useState({ title: '', description: '', date: '', time: '', location: '' })
   
   // Toast state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
@@ -44,7 +35,7 @@ const Dashboard = () => {
   }, [])
 
   // State to trigger refresh
-  const [refreshKey, setRefreshKey] = useState(0)
+  const [refreshKey] = useState(0)
 
   // Get rooms with last message and unread count
   const rooms = useMemo(() => {
@@ -68,18 +59,35 @@ const Dashboard = () => {
     }).sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime())
   }, [refreshKey])
 
-  // Get upcoming meetings (next 3-5)
+  // Get upcoming meetings (next 3-5) - connected to Calendar events
   const upcomingMeetings = useMemo(() => {
     const allEvents = getJSON<EventItem[]>(EVENTS_KEY, []) || []
     const now = new Date()
     
     return allEvents
-      .filter(e => {
-        const eventDate = new Date(e.date)
-        return eventDate >= now
+      .map(e => {
+        // Parse event date and time to get actual start datetime
+        const eventDate = typeof e.date === 'string' ? new Date(e.date) : new Date(e.date)
+        const timeStr = e.time || '09:00 - 10:00'
+        const fromTime = timeStr.split(' - ')[0] || '09:00'
+        const [hours, minutes] = fromTime.split(':').map(Number)
+        
+        // Create full datetime for event start
+        const eventStart = new Date(eventDate)
+        eventStart.setHours(hours || 9, minutes || 0, 0, 0)
+        
+        return {
+          event: e,
+          eventStart // Add computed start datetime
+        }
       })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .filter(item => {
+        // Filter for events where start >= now
+        return item.eventStart >= now
+      })
+      .sort((a, b) => a.eventStart.getTime() - b.eventStart.getTime())
       .slice(0, 5) // Show next 3-5 meetings (max 5)
+      .map(item => item.event) // Return just the events
   }, [refreshKey])
 
   // Get shared files (files shared with current user or rooms user is in)
@@ -97,83 +105,8 @@ const Dashboard = () => {
       .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
   }, [rooms, refreshKey])
 
-  const handleCreateRoom = () => {
-    if (!newRoom.name.trim()) {
-      setToast({ message: 'Please enter a room name', type: 'error' })
-      return
-    }
 
-    const room: Room = {
-      id: uuid(),
-      name: newRoom.name,
-      description: newRoom.description,
-      isPrivate: newRoom.isPrivate,
-      members: 1,
-      maxMembers: 50,
-      createdAt: nowISO(),
-      updatedAt: nowISO(),
-    }
 
-    const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-    setJSON(ROOMS_KEY, [...allRooms, room])
-    
-    setToast({ message: 'Room created', type: 'success' })
-    setShowCreateRoomModal(false)
-    setNewRoom({ name: '', description: '', isPrivate: false })
-    setRefreshKey(prev => prev + 1) // Refresh data
-  }
-
-  const handleUploadFile = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = false
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      const fileItem: FileItem = {
-        id: uuid(),
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        uploadedAt: nowISO(),
-        owner: 'Current User',
-      }
-
-      const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
-      setJSON(FILES_KEY, [...allFiles, fileItem])
-      
-      setToast({ message: `File "${file.name}" uploaded`, type: 'success' })
-      setRefreshKey(prev => prev + 1) // Refresh data
-    }
-    input.click()
-  }
-
-  const handleCreateEvent = () => {
-    if (!newEvent.title.trim() || !newEvent.date || !newEvent.time) {
-      setToast({ message: 'Please fill in all required fields', type: 'error' })
-      return
-    }
-
-    const event: EventItem = {
-      id: uuid(),
-      title: newEvent.title,
-      description: newEvent.description,
-      date: newEvent.date,
-      time: newEvent.time,
-      location: newEvent.location,
-      createdAt: nowISO(),
-      updatedAt: nowISO(),
-    }
-
-    const allEvents = getJSON<EventItem[]>(EVENTS_KEY, []) || []
-    setJSON(EVENTS_KEY, [...allEvents, event])
-    
-    setToast({ message: 'Event created', type: 'success' })
-    setShowNewEventModal(false)
-    setNewEvent({ title: '', description: '', date: '', time: '', location: '' })
-    setRefreshKey(prev => prev + 1) // Refresh data
-  }
 
   const handleMeetingClick = (event: EventItem) => {
     // Navigate to Calendar and focus the event
@@ -191,7 +124,7 @@ const Dashboard = () => {
       
       // If it's a backend file, use API download
       if ((file as any)._backendId) {
-        const API_URL = import.meta.env.VITE_API_URL || '/api'
+        const API_URL = (import.meta as any).env.VITE_API_URL || '/api'
         const axios = (await import('axios')).default
         const { getToken } = await import('../utils/auth')
         const token = getToken() || 'mock-token-for-testing'
@@ -241,20 +174,6 @@ const Dashboard = () => {
     }
   }
 
-  const formatTimeAgo = (timestamp: string) => {
-    const date = new Date(timestamp)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-    const diffHours = Math.floor(diffMs / 3600000)
-    const diffDays = Math.floor(diffMs / 86400000)
-
-    if (diffMins < 1) return 'Just now'
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    if (diffDays < 7) return `${diffDays}d ago`
-    return date.toLocaleDateString()
-  }
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B'
@@ -303,32 +222,6 @@ const Dashboard = () => {
           <h1 className="page-title">Dashboard</h1>
         </div>
 
-        {/* Admin-only Quick Actions */}
-        {role === 'admin' && (
-          <div className="mb-8">
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setShowCreateRoomModal(true)}
-                className="btn-primary"
-              >
-                <FaPlus /> Create Room
-              </button>
-              <button
-                onClick={handleUploadFile}
-                className="btn-primary"
-              >
-                <FaUpload /> Upload File
-              </button>
-              <button
-                onClick={() => setShowNewEventModal(true)}
-                className="btn-primary"
-              >
-                <FaCalendarAlt /> Add Meeting
-              </button>
-            </div>
-          </div>
-        )}
-
         <div className="grid lg:grid-cols-2 gap-8">
           {/* My Rooms Section */}
           <div className="card">
@@ -346,31 +239,23 @@ const Dashboard = () => {
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 <FaUsers className="text-4xl mx-auto mb-3 opacity-50" />
                 <p>No rooms yet</p>
-                {role === 'admin' && (
-                  <button
-                    onClick={() => setShowCreateRoomModal(true)}
-                    className="btn-primary mt-4"
-                  >
-                    Create Room
-                  </button>
-                )}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {rooms.map((room) => (
                   <button
                     key={room.id}
                     onClick={() => handleRoomClick(room.id)}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-all duration-200 ${
+                    className={`w-full text-left p-3 rounded-xl border-2 min-h-[62px] transition-colors ${
                       room.unreadCount && room.unreadCount > 0
-                        ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/20 ring-2 ring-blue-500/30'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-gray-800'
+                        ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+                        : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h3 className="text-base font-semibold text-gray-900 dark:text-white truncate">
                             {room.name}
                           </h3>
                           {room.unreadCount && room.unreadCount > 0 && (
@@ -379,14 +264,11 @@ const Dashboard = () => {
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 mb-1">
+                        <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1">
                           {room.lastMessage}
                         </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500">
-                          {formatTimeAgo(room.lastMessageTime || room.updatedAt)}
-                        </p>
                       </div>
-                      <FaChevronRight className="text-gray-400 flex-shrink-0 mt-1" />
+                      <FaChevronRight className="w-3.5 h-3.5 text-gray-400 opacity-60 flex-shrink-0 mt-0.5" />
                     </div>
                   </button>
                 ))}
@@ -399,7 +281,7 @@ const Dashboard = () => {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Upcoming Meetings</h2>
               <button
-                onClick={() => navigate('/calendar')}
+                onClick={() => navigate('/calendar', { state: { filterUpcoming: true } })}
                 className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
               >
                 View all <FaChevronRight className="text-xs" />
@@ -410,41 +292,28 @@ const Dashboard = () => {
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 <FaCalendarAlt className="text-4xl mx-auto mb-3 opacity-50" />
                 <p>No upcoming meetings</p>
-                {role === 'admin' && (
-                  <button
-                    onClick={() => setShowNewEventModal(true)}
-                    className="btn-primary mt-4"
-                  >
-                    Add Meeting
-                  </button>
-                )}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {upcomingMeetings.map((meeting) => (
                   <button
                     key={meeting.id}
                     onClick={() => handleMeetingClick(meeting)}
-                    className="w-full text-left p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-gray-800 transition-all duration-200"
+                    className="w-full text-left p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 min-h-[62px] transition-colors"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-900 dark:text-white mb-1 truncate">
+                        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-0.5 truncate">
                           {meeting.title}
                         </h3>
-                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-1">
-                          <FaCalendarAlt className="text-xs" />
-                          <span>{new Date(meeting.date).toLocaleDateString()}</span>
+                        <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                          <FaCalendarAlt className="text-[10px]" />
+                          <span>{typeof meeting.date === 'string' ? new Date(meeting.date).toLocaleDateString() : meeting.date.toLocaleDateString()}</span>
                           <span className="mx-1">•</span>
                           <span>{meeting.time}</span>
                         </div>
-                        {meeting.location && (
-                          <p className="text-xs text-gray-500 dark:text-gray-500">
-                            📍 {meeting.location}
-                          </p>
-                        )}
                       </div>
-                      <FaChevronRight className="text-gray-400 flex-shrink-0 mt-1" />
+                      <FaChevronRight className="w-3.5 h-3.5 text-gray-400 opacity-60 flex-shrink-0 mt-0.5" />
                     </div>
                   </button>
                 ))}
@@ -471,17 +340,17 @@ const Dashboard = () => {
               <p>No shared files</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {sharedFiles.map((file) => (
                 <div
                   key={file.id}
-                  className="p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+                  className="p-3 rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 min-h-[62px] transition-colors"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <FaFile className="text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                        <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <FaFile className="text-blue-600 dark:text-blue-400 flex-shrink-0 text-sm" />
+                        <h3 className="text-base font-semibold text-gray-900 dark:text-white truncate">
                           {file.name}
                         </h3>
                         {file.adminLabel && (
@@ -490,50 +359,41 @@ const Dashboard = () => {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-500 mb-2">
+                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500">
                         <span>{formatFileSize(file.size)}</span>
                         <span>•</span>
                         <span>{new Date(file.uploadedAt).toLocaleDateString()}</span>
                         <span>•</span>
                         <span>by {file.owner}</span>
                       </div>
-                      {expandedFileId === file.id && (file.adminNote || file.description) && (
+                      {expandedFileId === file.id && file.adminNote && (
                         <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                           <p className="text-sm text-gray-700 dark:text-gray-300">
-                            {file.adminNote && (
-                              <>
-                                <strong>Admin Note:</strong> {file.adminNote}
-                              </>
-                            )}
-                            {file.description && !file.adminNote && (
-                              <>
-                                <strong>Description:</strong> {file.description}
-                              </>
-                            )}
+                            <strong>Admin Note:</strong> {file.adminNote}
                           </p>
                         </div>
                       )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {(file.adminNote || file.description) && (
+                      {file.adminNote && (
                         <button
                           onClick={() => setExpandedFileId(expandedFileId === file.id ? null : file.id)}
-                          className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-                          title={expandedFileId === file.id ? 'Hide note' : 'Show admin note / description'}
+                          className="p-1.5 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                          title={expandedFileId === file.id ? 'Hide note' : 'Show admin note'}
                         >
                           {expandedFileId === file.id ? (
-                            <FaChevronUp />
+                            <FaChevronUp className="w-3 h-3" />
                           ) : (
-                            <FaChevronDown />
+                            <FaChevronDown className="w-3 h-3" />
                           )}
                         </button>
                       )}
                       <button
                         onClick={() => handleDownloadFile(file)}
-                        className="btn-secondary px-3 py-1.5 text-sm"
+                        className="btn-secondary px-2.5 py-1 text-xs"
                         title="Download file"
                       >
-                        <FaDownload />
+                        <FaDownload className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -543,165 +403,6 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Create Room Modal */}
-        <Modal
-          isOpen={showCreateRoomModal}
-          onClose={() => {
-            setShowCreateRoomModal(false)
-            setNewRoom({ name: '', description: '', isPrivate: false })
-          }}
-          title="Create Room"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Room Name *
-              </label>
-              <input
-                type="text"
-                value={newRoom.name}
-                onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter room name"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Description
-              </label>
-              <textarea
-                value={newRoom.description}
-                onChange={(e) => setNewRoom({ ...newRoom, description: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter room description"
-                rows={3}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="private-room"
-                checked={newRoom.isPrivate}
-                onChange={(e) => setNewRoom({ ...newRoom, isPrivate: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-              />
-              <label htmlFor="private-room" className="text-sm text-gray-700 dark:text-gray-300">
-                Private Room
-              </label>
-            </div>
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowCreateRoomModal(false)
-                  setNewRoom({ name: '', description: '', isPrivate: false })
-                }}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateRoom}
-                className="btn-primary flex-1"
-              >
-                Create Room
-              </button>
-            </div>
-          </div>
-        </Modal>
-
-        {/* New Event Modal */}
-        <Modal
-          isOpen={showNewEventModal}
-          onClose={() => {
-            setShowNewEventModal(false)
-            setNewEvent({ title: '', description: '', date: '', time: '', location: '' })
-          }}
-          title="Create Event"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Event Title *
-              </label>
-              <input
-                type="text"
-                value={newEvent.title}
-                onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter event title"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Description
-              </label>
-              <textarea
-                value={newEvent.description}
-                onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter event description"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Date *
-                </label>
-                <input
-                  type="date"
-                  value={newEvent.date}
-                  onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
-                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Time *
-                </label>
-                <input
-                  type="time"
-                  value={newEvent.time}
-                  onChange={(e) => setNewEvent({ ...newEvent, time: e.target.value })}
-                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  required
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Location
-              </label>
-              <input
-                type="text"
-                value={newEvent.location}
-                onChange={(e) => setNewEvent({ ...newEvent, location: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter location (optional)"
-              />
-            </div>
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowNewEventModal(false)
-                  setNewEvent({ title: '', description: '', date: '', time: '', location: '' })
-                }}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateEvent}
-                className="btn-primary flex-1"
-              >
-                Create Event
-              </button>
-            </div>
-          </div>
-        </Modal>
 
         {/* Toast */}
         {toast && (

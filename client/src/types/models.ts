@@ -31,6 +31,11 @@ export interface EventItem {
   createdAt: string
   updatedAt: string
   organizerId?: string
+  creatorId?: string // User ID who created the event
+  isInvite?: boolean // true if user was invited (not creator)
+  inviteStatus?: 'pending' | 'accepted' | 'declined' // default "pending" when invited
+  isRecurring?: boolean
+  recurrenceType?: 'none' | 'daily' | 'weekly' | 'monthly' // default "none"
 }
 
 export interface FileItem {

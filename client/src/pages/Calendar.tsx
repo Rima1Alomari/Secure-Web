@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo } from 'react-icons/fa'
+import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaChevronDown, FaUsers, FaUserFriends, FaSearch, FaLink, FaCheck, FaTimesCircle } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { EVENTS_KEY } from '../data/keys'
-import { EventItem } from '../types/models'
+import { EVENTS_KEY, ADMIN_USERS_KEY, ROOMS_KEY } from '../data/keys'
+import { EventItem, AdminUserMock, Room } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import { trackMeetingOpened } from '../utils/recentTracker'
 
@@ -15,6 +15,11 @@ interface Event extends EventItem {
   to?: string
   showAs?: 'busy' | 'free'
   sharedWith?: string[]
+  color?: string
+  isOnline?: boolean
+  meetingLink?: string
+  invitedGroup?: string
+  type?: 'meeting' | 'event' // Store type for proper modal title
 }
 
 const Calendar = () => {
@@ -31,6 +36,12 @@ const Calendar = () => {
   const [showEventDetailsModal, setShowEventDetailsModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
+  const [showNewDropdown, setShowNewDropdown] = useState(false)
+  const [eventType, setEventType] = useState<'meeting' | 'event'>('meeting')
+  const [inviteUserSearch, setInviteUserSearch] = useState('')
+  const [invitedUsers, setInvitedUsers] = useState<string[]>([])
+  const [invitedGroup, setInvitedGroup] = useState<string>('')
+  const newDropdownRef = useRef<HTMLDivElement>(null)
   
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -40,8 +51,42 @@ const Calendar = () => {
     to: '10:00',
     location: '',
     showAs: 'busy' as 'busy' | 'free',
-    sharedWith: [] as string[]
+    sharedWith: [] as string[],
+    color: '#3B82F6', // Default blue
+    isOnline: false,
+    meetingLink: '',
+    isRecurring: false,
+    recurrenceType: 'none' as 'none' | 'daily' | 'weekly' | 'monthly'
   })
+
+  // Get all users and rooms for invite functionality
+  const allUsers = useMemo(() => {
+    return getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+  }, [])
+
+  const allRooms = useMemo(() => {
+    return getJSON<Room[]>(ROOMS_KEY, []) || []
+  }, [])
+
+  // Filter users for invite search
+  const filteredUsersForInvite = useMemo(() => {
+    if (!inviteUserSearch.trim()) return []
+    const query = inviteUserSearch.toLowerCase()
+    return allUsers
+      .filter(u => !invitedUsers.includes(u.id) && (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query)))
+      .slice(0, 10)
+  }, [allUsers, inviteUserSearch, invitedUsers])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (newDropdownRef.current && !newDropdownRef.current.contains(event.target as Node)) {
+        setShowNewDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Load events from localStorage
   useEffect(() => {
@@ -87,10 +132,60 @@ const Calendar = () => {
     }
   }, [events])
 
+  const handleCreateMeeting = () => {
+    setEventType('meeting')
+    setShowNewDropdown(false)
+    setShowCreateModal(true)
+    // Reset form
+    setNewEvent({
+      title: '',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      from: '09:00',
+      to: '10:00',
+      location: '',
+      showAs: 'busy',
+      sharedWith: [],
+      color: '#3B82F6',
+      isOnline: false,
+      meetingLink: ''
+    })
+    setInvitedUsers([])
+    setInvitedGroup('')
+  }
+
   const handleCreateEvent = () => {
+    setEventType('event')
+    setShowNewDropdown(false)
+    setShowCreateModal(true)
+    // Reset form
+    setNewEvent({
+      title: '',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      from: '09:00',
+      to: '10:00',
+      location: '',
+      showAs: 'busy',
+      sharedWith: [],
+      color: '#3B82F6',
+      isOnline: false,
+      meetingLink: ''
+    })
+    setInvitedUsers([])
+    setInvitedGroup('')
+  }
+
+  const handleSaveEvent = () => {
     if (!newEvent.title.trim() || !newEvent.from || !newEvent.to) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
+    }
+
+    // Auto-generate meeting link if online and not provided
+    let meetingLink = newEvent.meetingLink
+    if (newEvent.isOnline && !meetingLink) {
+      meetingLink = `https://meet.secure-web.com/${uuid().substring(0, 8)}`
     }
 
     const roomId = (location.state as any)?.roomId || (newEvent as any).roomId
@@ -104,22 +199,53 @@ const Calendar = () => {
       to: newEvent.to,
       location: newEvent.location || undefined,
       showAs: newEvent.showAs,
-      sharedWith: newEvent.sharedWith,
+      sharedWith: [...newEvent.sharedWith, ...invitedUsers],
       createdAt: nowISO(),
       updatedAt: nowISO(),
+      creatorId: user?.id, // Set creator ID
+      color: newEvent.color,
+      isOnline: newEvent.isOnline,
+      meetingLink: meetingLink || undefined,
+      invitedGroup: invitedGroup || undefined,
+      isRecurring: newEvent.isRecurring,
+      recurrenceType: newEvent.recurrenceType,
+      type: eventType, // Store type (meeting or event)
+      // For invited users, set isInvite and inviteStatus
+      isInvite: false, // Creator is not invited
+      inviteStatus: undefined // No status for creator
     } as any
+
+    // Add creator's event
+    const newEvents = [event]
+
+    // For each invited user, create an event copy with invite status (only if not daily recurring)
+    if (invitedUsers.length > 0 && newEvent.recurrenceType !== 'daily') {
+      invitedUsers.forEach(userId => {
+        const inviteEvent: Event = {
+          ...event,
+          id: uuid(), // New ID for each invite
+          creatorId: user?.id, // Original creator
+          type: eventType, // Preserve type
+          isInvite: true,
+          inviteStatus: 'pending'
+        }
+        newEvents.push(inviteEvent)
+      })
+    }
     
     if (roomId) {
-      (event as any).roomId = roomId
-      if (!event.description) {
-        event.description = `Room: ${roomId}`
-      } else if (!event.description.includes(`Room: ${roomId}`)) {
-        event.description = `Room: ${roomId}\n${event.description}`
-      }
+      newEvents.forEach(e => {
+        (e as any).roomId = roomId
+        if (!e.description) {
+          e.description = `Room: ${roomId}`
+        } else if (!e.description.includes(`Room: ${roomId}`)) {
+          e.description = `Room: ${roomId}\n${e.description}`
+        }
+      })
     }
 
-    setEvents([...events, event])
-    setToast({ message: 'Event created successfully', type: 'success' })
+    setEvents([...events, ...newEvents])
+    setToast({ message: `${eventType === 'meeting' ? 'Meeting' : 'Event'} created successfully`, type: 'success' })
     setNewEvent({
       title: '',
       description: '',
@@ -128,8 +254,15 @@ const Calendar = () => {
       to: '10:00',
       location: '',
       showAs: 'busy',
-      sharedWith: []
+      sharedWith: [],
+      color: '#3B82F6',
+      isOnline: false,
+      meetingLink: '',
+      isRecurring: false,
+      recurrenceType: 'none'
     })
+    setInvitedUsers([])
+    setInvitedGroup('')
     setShowCreateModal(false)
   }
 
@@ -142,6 +275,9 @@ const Calendar = () => {
 
   const handleEditEvent = () => {
     if (!selectedEvent || !isAdmin) return
+    // Use stored type or determine from event properties
+    const storedType = (selectedEvent as any).type || ((selectedEvent as any).isOnline || (selectedEvent as any).meetingLink ? 'meeting' : 'event')
+    setEventType(storedType)
     setNewEvent({
       title: selectedEvent.title,
       description: selectedEvent.description,
@@ -152,8 +288,15 @@ const Calendar = () => {
       to: selectedEvent.to || selectedEvent.time.split(' - ')[1] || '10:00',
       location: selectedEvent.location || '',
       showAs: selectedEvent.showAs || 'busy',
-      sharedWith: selectedEvent.sharedWith || []
+      sharedWith: selectedEvent.sharedWith || [],
+      color: (selectedEvent as any).color || '#3B82F6',
+      isOnline: (selectedEvent as any).isOnline || false,
+      meetingLink: (selectedEvent as any).meetingLink || '',
+      isRecurring: (selectedEvent as any).isRecurring || false,
+      recurrenceType: (selectedEvent as any).recurrenceType || 'none'
     })
+    setInvitedUsers((selectedEvent.sharedWith || []) as string[])
+    setInvitedGroup((selectedEvent as any).invitedGroup || '')
     setShowEventDetailsModal(false)
     setShowCreateModal(true)
     setSelectedEvent(null)
@@ -163,6 +306,12 @@ const Calendar = () => {
     if (!selectedEvent || !newEvent.title.trim() || !isAdmin) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
+    }
+
+    // Auto-generate meeting link if online and not provided
+    let meetingLink = newEvent.meetingLink
+    if (newEvent.isOnline && !meetingLink) {
+      meetingLink = `https://meet.secure-web.com/${uuid().substring(0, 8)}`
     }
 
     const updatedEvent: Event = {
@@ -175,12 +324,19 @@ const Calendar = () => {
       to: newEvent.to,
       location: newEvent.location || undefined,
       showAs: newEvent.showAs,
-      sharedWith: newEvent.sharedWith,
+      sharedWith: [...newEvent.sharedWith, ...invitedUsers],
       updatedAt: nowISO(),
-    }
+      color: newEvent.color,
+      isOnline: newEvent.isOnline,
+      meetingLink: meetingLink || undefined,
+      invitedGroup: invitedGroup || undefined,
+      isRecurring: newEvent.isRecurring,
+      recurrenceType: newEvent.recurrenceType,
+      type: eventType // Preserve type
+    } as any
 
     setEvents(events.map(e => e.id === selectedEvent.id ? updatedEvent : e))
-    setToast({ message: 'Event updated successfully', type: 'success' })
+    setToast({ message: `${eventType === 'meeting' ? 'Meeting' : 'Event'} updated successfully`, type: 'success' })
     setShowCreateModal(false)
     setSelectedEvent(null)
     setNewEvent({
@@ -191,14 +347,20 @@ const Calendar = () => {
       to: '10:00',
       location: '',
       showAs: 'busy',
-      sharedWith: []
+      sharedWith: [],
+      color: '#3B82F6',
+      isOnline: false,
+      meetingLink: ''
     })
+    setInvitedUsers([])
+    setInvitedGroup('')
   }
 
   const handleDateClick = (date: Date) => {
     setSelectedDate(date)
     // Only open create modal for admins
     if (isAdmin) {
+      setEventType('event') // Default to event when clicking date
       setNewEvent({
         ...newEvent,
         date: date.toISOString().split('T')[0]
@@ -216,20 +378,42 @@ const Calendar = () => {
     }
   }
 
-  const handleJoinEvent = (event: Event) => {
-    // Navigate to video room or meeting
-    const roomId = (event as any).roomId
-    if (roomId) {
-      navigate(`/rooms/${roomId}`)
-    } else {
-      // Show event details instead of demo mode
-      setSelectedEvent(event)
-      setShowEventDetailsModal(true)
-      // Track meeting opened
-      if (user?.id) {
-        trackMeetingOpened(event.id, event.title, user.id)
-      }
+  const handleAcceptInvite = () => {
+    if (!selectedEvent || !user?.id) return
+
+    const updatedEvent: Event = {
+      ...selectedEvent,
+      inviteStatus: 'accepted',
+      updatedAt: nowISO()
     }
+
+    setEvents(events.map(e => e.id === selectedEvent.id ? updatedEvent : e))
+    setSelectedEvent(updatedEvent)
+    setToast({ message: 'Invitation accepted', type: 'success' })
+    
+    // Update in localStorage
+    const allEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
+    const updatedEvents = allEvents.map(e => e.id === selectedEvent.id ? updatedEvent : e)
+    setJSON(EVENTS_KEY, updatedEvents)
+  }
+
+  const handleDeclineInvite = () => {
+    if (!selectedEvent || !user?.id) return
+
+    const updatedEvent: Event = {
+      ...selectedEvent,
+      inviteStatus: 'declined',
+      updatedAt: nowISO()
+    }
+
+    setEvents(events.map(e => e.id === selectedEvent.id ? updatedEvent : e))
+    setSelectedEvent(updatedEvent)
+    setToast({ message: 'Invitation declined', type: 'info' })
+    
+    // Update in localStorage
+    const allEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
+    const updatedEvents = allEvents.map(e => e.id === selectedEvent.id ? updatedEvent : e)
+    setJSON(EVENTS_KEY, updatedEvents)
   }
 
   const getEventsForDate = (date: Date) => {
@@ -243,7 +427,7 @@ const Calendar = () => {
     })
   }
 
-  // Get days for month view
+  // Get days for month view - fixed to 5 rows (35 days)
   const getMonthDays = () => {
     const year = currentDate.getFullYear()
     const month = currentDate.getMonth()
@@ -252,19 +436,45 @@ const Calendar = () => {
     const daysInMonth = lastDay.getDate()
     const startingDayOfWeek = firstDay.getDay()
 
-    const days: (Date | null)[] = []
+    const days: Date[] = []
     
-    // Add empty cells for days before month starts
-    for (let i = 0; i < startingDayOfWeek; i++) {
-      days.push(null)
+    // Add days from previous month
+    const prevMonth = month === 0 ? 11 : month - 1
+    const prevYear = month === 0 ? year - 1 : year
+    const prevMonthLastDay = new Date(prevYear, prevMonth + 1, 0).getDate()
+    
+    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+      days.push(new Date(prevYear, prevMonth, prevMonthLastDay - i))
     }
     
-    // Add days of the month
+    // Add days of the current month
     for (let day = 1; day <= daysInMonth; day++) {
       days.push(new Date(year, month, day))
     }
     
+    // Add days from next month to fill exactly 5 rows (35 days total)
+    const totalDays = days.length
+    const remainingDays = 35 - totalDays
+    const nextMonth = month === 11 ? 0 : month + 1
+    const nextYear = month === 11 ? year + 1 : year
+    
+    for (let day = 1; day <= remainingDays; day++) {
+      days.push(new Date(nextYear, nextMonth, day))
+    }
+    
     return days
+  }
+
+  // Check if a date belongs to a different month than currentDate
+  const isOutsideMonth = (date: Date) => {
+    return date.getMonth() !== currentDate.getMonth() || 
+           date.getFullYear() !== currentDate.getFullYear()
+  }
+
+  // Format date label for outside month days (e.g., "Nov 30")
+  const formatOutsideMonthLabel = (date: Date) => {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${monthNames[date.getMonth()]} ${date.getDate()}`
   }
 
   // Get days for week view
@@ -333,12 +543,34 @@ const Calendar = () => {
           <div className="flex items-center justify-between">
             <h1 className="page-title">Calendar</h1>
             {isAdmin && (
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="btn-primary"
-              >
-                <FaPlus /> Add Event
-              </button>
+              <div className="relative" ref={newDropdownRef}>
+                <button
+                  onClick={() => setShowNewDropdown(!showNewDropdown)}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  <FaPlus /> New
+                  <FaChevronDown className="text-xs" />
+                </button>
+                
+                {showNewDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-50">
+                    <button
+                      onClick={handleCreateMeeting}
+                      className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-t-xl"
+                    >
+                      <FaUsers className="text-blue-600 dark:text-blue-400" />
+                      <span className="text-gray-900 dark:text-white">Meeting</span>
+                    </button>
+                    <button
+                      onClick={handleCreateEvent}
+                      className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors rounded-b-xl"
+                    >
+                      <FaCalendarAlt className="text-green-600 dark:text-green-400" />
+                      <span className="text-gray-900 dark:text-white">Event</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -420,68 +652,81 @@ const Calendar = () => {
               </h2>
             </div>
 
-            {/* Month View */}
+            {/* Month View - Fixed 5 rows (35 days) */}
             {viewMode === 'month' && (
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
                     <tr>
                       {weekDays.map(day => (
-                        <th key={day} className="p-3 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+                        <th key={day} className="p-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
                           {day}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.from({ length: Math.ceil(monthDays.length / 7) }).map((_, weekIndex) => (
+                    {Array.from({ length: 5 }).map((_, weekIndex) => (
                       <tr key={weekIndex}>
                         {weekDays.map((_, dayIndex) => {
                           const dayIndexInMonth = weekIndex * 7 + dayIndex
                           const date = monthDays[dayIndexInMonth]
                           const dayEvents = date ? getEventsForDate(date) : []
+                          const isOutside = date ? isOutsideMonth(date) : false
                           
                           return (
                             <td
                               key={dayIndex}
-                              className={`p-2 border border-gray-200 dark:border-gray-700 min-h-[100px] align-top ${
-                                !date ? 'bg-gray-50 dark:bg-gray-900/50' : ''
+                              className={`p-1.5 border border-gray-200 dark:border-gray-700 h-[80px] align-top relative ${
+                                isOutside ? 'opacity-50 bg-gray-50 dark:bg-gray-900/30' : ''
                               } ${
-                                date && isToday(date) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                                date && !isOutside && isToday(date) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                               } ${
                                 date && selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
                               }`}
                             >
                               {date && (
-                                <button
-                                  onClick={() => handleDateClick(date)}
-                                  className={`w-full text-left mb-1 ${
-                                    isToday(date)
-                                      ? 'font-bold text-blue-600 dark:text-blue-400'
-                                      : 'text-gray-900 dark:text-white'
-                                  }`}
-                                >
-                                  {date.getDate()}
-                                </button>
+                                <>
+                                  {/* Outside month label */}
+                                  {isOutside && (
+                                    <div className="absolute top-1 right-1 text-xs text-gray-500 dark:text-gray-400 font-medium">
+                                      {formatOutsideMonthLabel(date)}
+                                    </div>
+                                  )}
+                                  <button
+                                    onClick={() => handleDateClick(date)}
+                                    className={`w-full text-left mb-1 relative ${
+                                      isToday(date) && !isOutside
+                                        ? 'font-bold text-blue-600 dark:text-blue-400'
+                                        : isOutside
+                                        ? 'text-gray-500 dark:text-gray-500'
+                                        : 'text-gray-900 dark:text-white'
+                                    }`}
+                                  >
+                                    {date.getDate()}
+                                  </button>
+                                </>
                               )}
                               {date && dayEvents.length > 0 && (
-                                <div className="space-y-1">
-                                  {dayEvents.slice(0, 3).map(event => (
+                                <div className="space-y-0.5">
+                                  {dayEvents.slice(0, 2).map(event => (
                                     <button
                                       key={event.id}
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         handleEventClick(event)
                                       }}
-                                      className="w-full text-xs p-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded truncate hover:bg-blue-200 dark:hover:bg-blue-900/50"
+                                      className={`w-full text-[10px] px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded truncate hover:bg-blue-200 dark:hover:bg-blue-900/50 ${
+                                        isOutside ? 'opacity-60' : ''
+                                      }`}
                                       title={event.title}
                                     >
                                       {event.title}
                                     </button>
                                   ))}
-                                  {dayEvents.length > 3 && (
-                                    <div className="text-xs text-gray-500 dark:text-gray-500">
-                                      +{dayEvents.length - 3} more
+                                  {dayEvents.length > 2 && (
+                                    <div className={`text-[10px] px-1 ${isOutside ? 'text-gray-400 dark:text-gray-600' : 'text-gray-500 dark:text-gray-500'}`}>
+                                      +{dayEvents.length - 2}
                                     </div>
                                   )}
                                 </div>
@@ -642,26 +887,107 @@ const Calendar = () => {
                 to: '10:00',
                 location: '',
                 showAs: 'busy',
-                sharedWith: []
+                sharedWith: [],
+                color: '#3B82F6',
+                isOnline: false,
+                meetingLink: ''
               })
+              setInvitedUsers([])
+              setInvitedGroup('')
               if (selectedEvent) setSelectedEvent(null)
             }}
-            title={selectedEvent ? 'Edit Event' : 'Add New Event'}
+            title={selectedEvent ? `Edit ${eventType === 'meeting' ? 'Meeting' : 'Event'}` : `Add New ${eventType === 'meeting' ? 'Meeting' : 'Event'}`}
           >
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Title *
+                  {eventType === 'meeting' ? 'Meeting Name' : 'Event Name'} *
                 </label>
                 <input
                   type="text"
                   value={newEvent.title}
                   onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
                   className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                  placeholder="Enter event title"
+                  placeholder={`Enter ${eventType === 'meeting' ? 'meeting' : 'event'} name`}
                   required
                 />
               </div>
+
+              {/* Color Picker */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  Color
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { name: 'Blue', value: '#3B82F6' },
+                    { name: 'Green', value: '#10B981' },
+                    { name: 'Purple', value: '#8B5CF6' },
+                    { name: 'Red', value: '#EF4444' },
+                    { name: 'Orange', value: '#F59E0B' },
+                    { name: 'Pink', value: '#EC4899' },
+                    { name: 'Teal', value: '#14B8A6' },
+                    { name: 'Yellow', value: '#EAB308' }
+                  ].map(color => (
+                    <button
+                      key={color.value}
+                      type="button"
+                      onClick={() => setNewEvent({ ...newEvent, color: color.value })}
+                      className={`w-10 h-10 rounded-lg border-2 transition-all ${
+                        newEvent.color === color.value
+                          ? 'border-blue-600 dark:border-blue-400 ring-2 ring-blue-500 scale-110'
+                          : 'border-gray-300 dark:border-gray-600 hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: color.value }}
+                      title={color.name}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Online Toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Online
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Enable online meeting link
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNewEvent({ ...newEvent, isOnline: !newEvent.isOnline, meetingLink: !newEvent.isOnline ? '' : newEvent.meetingLink })}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    newEvent.isOnline ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      newEvent.isOnline ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Meeting Link (when Online is on) */}
+              {newEvent.isOnline && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    Meeting Link
+                  </label>
+                  <div className="relative">
+                    <FaLink className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" />
+                    <input
+                      type="text"
+                      value={newEvent.meetingLink}
+                      onChange={(e) => setNewEvent({ ...newEvent, meetingLink: e.target.value })}
+                      className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                      placeholder="https://meet.secure-web.com/abc123 (auto-generated if empty)"
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -721,9 +1047,138 @@ const Calendar = () => {
                   onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
                   className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                   rows={3}
-                  placeholder="Enter event description"
+                  placeholder="Enter description"
                 />
               </div>
+
+              {/* Invite Users */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  <FaUsers className="inline mr-2" />
+                  Invite Users
+                </label>
+                <div className="relative mb-2">
+                  <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" />
+                  <input
+                    type="text"
+                    value={inviteUserSearch}
+                    onChange={(e) => setInviteUserSearch(e.target.value)}
+                    placeholder="Search users…"
+                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                  />
+                </div>
+                {filteredUsersForInvite.length > 0 && (
+                  <div className="max-h-32 overflow-y-auto border-2 border-gray-200 dark:border-gray-700 rounded-lg mb-2">
+                    {filteredUsersForInvite.map(user => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        onClick={() => {
+                          if (!invitedUsers.includes(user.id)) {
+                            setInvitedUsers([...invitedUsers, user.id])
+                            setInviteUserSearch('')
+                          }
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+                      >
+                        <FaUsers className="text-blue-600 dark:text-blue-400 text-sm" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user.name}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
+                        </div>
+                        <FaPlus className="text-blue-600 dark:text-blue-400 text-xs" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {invitedUsers.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {invitedUsers.map(userId => {
+                      const user = allUsers.find(u => u.id === userId)
+                      if (!user) return null
+                      return (
+                        <span
+                          key={userId}
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-xs"
+                        >
+                          {user.name}
+                          <button
+                            type="button"
+                            onClick={() => setInvitedUsers(invitedUsers.filter(id => id !== userId))}
+                            className="hover:text-blue-900 dark:hover:text-blue-100"
+                          >
+                            <FaTimes className="text-xs" />
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Invite Group */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  <FaUserFriends className="inline mr-2" />
+                  Invite Group
+                </label>
+                <select
+                  value={invitedGroup}
+                  onChange={(e) => setInvitedGroup(e.target.value)}
+                  className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                >
+                  <option value="">Select a group (optional)</option>
+                  {allRooms.map(room => (
+                    <option key={room.id} value={room.id}>
+                      {room.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Recurring Options */}
+              <div>
+                <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg mb-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Recurring
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Repeat this event
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewEvent({ 
+                      ...newEvent, 
+                      isRecurring: !newEvent.isRecurring,
+                      recurrenceType: !newEvent.isRecurring ? 'none' : newEvent.recurrenceType
+                    })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      newEvent.isRecurring ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        newEvent.isRecurring ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                {newEvent.isRecurring && (
+                  <select
+                    value={newEvent.recurrenceType}
+                    onChange={(e) => setNewEvent({ ...newEvent, recurrenceType: e.target.value as 'none' | 'daily' | 'weekly' | 'monthly' })}
+                    className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  >
+                    <option value="none">None</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                )}
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => {
@@ -736,8 +1191,15 @@ const Calendar = () => {
                       to: '10:00',
                       location: '',
                       showAs: 'busy',
-                      sharedWith: []
+                      sharedWith: [],
+                      color: '#3B82F6',
+                      isOnline: false,
+                      meetingLink: '',
+                      isRecurring: false,
+                      recurrenceType: 'none'
                     })
+                    setInvitedUsers([])
+                    setInvitedGroup('')
                     if (selectedEvent) setSelectedEvent(null)
                   }}
                   className="btn-secondary flex-1"
@@ -745,10 +1207,10 @@ const Calendar = () => {
                   Cancel
                 </button>
                 <button
-                  onClick={selectedEvent ? handleUpdateEvent : handleCreateEvent}
+                  onClick={selectedEvent ? handleUpdateEvent : handleSaveEvent}
                   className="btn-primary flex-1"
                 >
-                  {selectedEvent ? 'Update Event' : 'Create Event'}
+                  {selectedEvent ? `Update ${eventType === 'meeting' ? 'Meeting' : 'Event'}` : `Create ${eventType === 'meeting' ? 'Meeting' : 'Event'}`}
                 </button>
               </div>
             </div>
@@ -762,7 +1224,11 @@ const Calendar = () => {
             setShowEventDetailsModal(false)
             setSelectedEvent(null)
           }}
-          title="Event Details"
+          title={selectedEvent ? (
+            ((selectedEvent as any)?.type || ((selectedEvent as any)?.isOnline || (selectedEvent as any)?.meetingLink ? 'meeting' : 'event')) === 'meeting' 
+              ? 'Meeting Details' 
+              : 'Event Details'
+          ) : 'Event Details'}
         >
           {selectedEvent && (
             <div className="space-y-4">
@@ -797,30 +1263,52 @@ const Calendar = () => {
                 )}
               </div>
               <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  onClick={() => handleJoinEvent(selectedEvent)}
-                  className="btn-primary flex-1"
-                >
-                  <FaVideo /> Join
-                </button>
-                {isAdmin && (
+                {/* Accept/Decline buttons for pending invites */}
+                {selectedEvent.isInvite === true && 
+                 selectedEvent.inviteStatus === 'pending' && 
+                 selectedEvent.recurrenceType !== 'daily' && (
                   <>
                     <button
-                      onClick={handleEditEvent}
-                      className="btn-secondary flex-1"
+                      onClick={handleAcceptInvite}
+                      className="btn-primary flex-1"
                     >
-                      <FaEdit /> Edit
+                      <FaCheck /> Accept Invite
                     </button>
                     <button
-                      onClick={() => {
-                        if (confirm('Are you sure you want to delete this event?')) {
-                          handleDeleteEvent(selectedEvent.id)
-                        }
-                      }}
-                      className="btn-danger flex-1"
+                      onClick={handleDeclineInvite}
+                      className="btn-secondary flex-1"
                     >
-                      <FaTrash /> Delete
+                      <FaTimesCircle /> Decline
                     </button>
+                  </>
+                )}
+
+                {/* Edit/Delete buttons - only for creator */}
+                {selectedEvent.creatorId === user?.id && isAdmin && (
+                  <>
+                    {/* Show Edit/Delete when: not an invite, or already accepted/declined, or daily recurring */}
+                    {(!selectedEvent.isInvite || 
+                      (selectedEvent.inviteStatus !== 'pending' && selectedEvent.inviteStatus !== undefined) || 
+                      selectedEvent.recurrenceType === 'daily') && (
+                      <>
+                        <button
+                          onClick={handleEditEvent}
+                          className="btn-secondary flex-1"
+                        >
+                          <FaEdit /> Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm('Are you sure you want to delete this event?')) {
+                              handleDeleteEvent(selectedEvent.id)
+                            }
+                          }}
+                          className="btn-danger flex-1"
+                        >
+                          <FaTrash /> Delete
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
               </div>

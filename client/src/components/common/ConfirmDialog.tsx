@@ -55,7 +55,12 @@ export default function ConfirmDialog({
 
         {/* Body */}
         <div className="p-6">
-          <p className="text-gray-700 dark:text-gray-300">{message}</p>
+          <p className="text-gray-700 dark:text-gray-300 mb-2">{message}</p>
+          {confirmVariant === 'danger' && (
+            <p className="text-sm text-red-600 dark:text-red-400 font-medium">
+              This can't be undone.
+            </p>
+          )}
         </div>
 
         {/* Footer */}
