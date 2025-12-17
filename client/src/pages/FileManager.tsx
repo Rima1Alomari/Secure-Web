@@ -15,7 +15,19 @@ import {
   FaFileAlt,
   FaFolder,
   FaTag,
-  FaStickyNote
+  FaStickyNote,
+  FaUserEdit,
+  FaUser,
+  FaTimes,
+  FaCheckCircle,
+  FaLock,
+  FaUnlock,
+  FaUsers,
+  FaDoorOpen,
+  FaChevronRight,
+  FaSearch,
+  FaRobot,
+  FaMagic
 } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, nowISO } from '../data/storage'
@@ -34,6 +46,26 @@ const FileManager = () => {
   const [files, setFiles] = useState<FileItem[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [selectedRoomId, setSelectedRoomId] = useState<string>('all')
+  const [availableUsers, setAvailableUsers] = useState<Array<{ id: string; name: string; email: string }>>([])
+  
+  // Check if user is a member of any room (for room-based file control)
+  const isRoomMember = useMemo(() => {
+    if (!user?.id) return false
+    return rooms.some(room => room.memberIds?.includes(user.id) || room.ownerId === user.id)
+  }, [rooms, user?.id])
+  
+  // Check if user can manage a specific file (admin or in editors list)
+  const canManageFile = (file: FileItem): boolean => {
+    if (isAdmin) return true
+    if (!user?.id) return false
+    
+    // Check if user is in editors list
+    if (file.editors && file.editors.length > 0) {
+      return file.editors.includes(user.id)
+    }
+    
+    return false
+  }
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
   
@@ -43,12 +75,29 @@ const FileManager = () => {
   const [showInstructionModal, setShowInstructionModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false)
   
   // Form states
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [labelValue, setLabelValue] = useState<'Important' | 'Action' | 'Plan' | 'FYI' | ''>('')
   const [instructionValue, setInstructionValue] = useState('')
+  
+  // Permission states - Room members selection
+  const [pendingFile, setPendingFile] = useState<globalThis.File | null>(null)
+  const [selectedEditorRooms, setSelectedEditorRooms] = useState<string[]>([]) // Selected rooms to show members
+  const [selectedViewerRooms, setSelectedViewerRooms] = useState<string[]>([]) // Selected rooms to show members
+  const [selectedEditorMembers, setSelectedEditorMembers] = useState<string[]>([]) // Selected member IDs for editing
+  const [selectedViewerMembers, setSelectedViewerMembers] = useState<string[]>([]) // Selected member IDs for viewing
+  const [expandedEditorRooms, setExpandedEditorRooms] = useState<Set<string>>(new Set()) // Rooms with expanded member list
+  const [expandedViewerRooms, setExpandedViewerRooms] = useState<Set<string>>(new Set()) // Rooms with expanded member list
+  const [validating, setValidating] = useState(false)
+  
+  // AI features state
+  const [aiSearchQuery, setAiSearchQuery] = useState('')
+  const [isAiSearching, setIsAiSearching] = useState(false)
+  const [aiSearchResults, setAiSearchResults] = useState<FileItem[]>([])
+  const [autoTagEnabled, setAutoTagEnabled] = useState(true)
   
   // File input refs
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -66,6 +115,14 @@ const FileManager = () => {
                    backendFile.owner?.toString() || 
                    backendFile.ownerId
 
+    // Extract user-based permissions
+    const editors = backendFile.editors || []
+    const viewers = backendFile.viewers || []
+    const editorIds = editors.map((e: any) => e._id?.toString() || e.toString())
+    const viewerIds = viewers.map((v: any) => v._id?.toString() || v.toString())
+    const editorNames = editors.map((e: any) => e.name || 'Unknown')
+    const viewerNames = viewers.map((v: any) => v.name || 'Unknown')
+
     return {
       id: backendFile._id || backendFile.id,
       name: backendFile.name,
@@ -78,8 +135,39 @@ const FileManager = () => {
       isFolder: false,
       // Store backend file reference for API calls
       _backendId: backendFile._id || backendFile.id,
+      // User-based permissions
+      editors: editorIds,
+      viewers: viewerIds,
+      editorNames: editorNames,
+      viewerNames: viewerNames,
+      permissionMode: backendFile.permissionMode || 'owner-only',
     }
   }
+
+
+  // Fetch users for member selection
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const token = getToken() || 'mock-token-for-testing'
+        const response = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (response.data && Array.isArray(response.data)) {
+          setAvailableUsers(response.data.map((u: any) => ({
+            id: u._id || u.id,
+            name: u.name,
+            email: u.email
+          })))
+        }
+      } catch (error) {
+        console.log('Could not fetch users from API')
+      }
+    }
+    if (isAdmin || isRoomMember) {
+      fetchUsers()
+    }
+  }, [isAdmin, isRoomMember])
 
   // Load files from API and rooms from localStorage
   useEffect(() => {
@@ -115,39 +203,202 @@ const FileManager = () => {
     fetchFiles()
   }, [])
 
+  // Helper to get user info by ID
+  const getUserInfo = (userId: string) => {
+    return availableUsers.find(u => u.id === userId) || { id: userId, name: userId, email: '' }
+  }
+
+  // Toggle room expansion to show members
+  const toggleEditorRoom = (roomId: string) => {
+    const newExpanded = new Set(expandedEditorRooms)
+    if (newExpanded.has(roomId)) {
+      newExpanded.delete(roomId)
+    } else {
+      newExpanded.add(roomId)
+      // Add room to selected if not already
+      if (!selectedEditorRooms.includes(roomId)) {
+        setSelectedEditorRooms([...selectedEditorRooms, roomId])
+        // Remove from viewers if it's there
+        setSelectedViewerRooms(selectedViewerRooms.filter(id => id !== roomId))
+        // Remove viewer members from this room
+        const room = rooms.find(r => r.id === roomId)
+        if (room?.memberIds) {
+          setSelectedViewerMembers(selectedViewerMembers.filter(id => !room.memberIds?.includes(id)))
+        }
+      }
+    }
+    setExpandedEditorRooms(newExpanded)
+  }
+
+  const toggleViewerRoom = (roomId: string) => {
+    const newExpanded = new Set(expandedViewerRooms)
+    if (newExpanded.has(roomId)) {
+      newExpanded.delete(roomId)
+    } else {
+      newExpanded.add(roomId)
+      // Add room to selected if not already
+      if (!selectedViewerRooms.includes(roomId)) {
+        setSelectedViewerRooms([...selectedViewerRooms, roomId])
+        // Remove from editors if it's there
+        setSelectedEditorRooms(selectedEditorRooms.filter(id => id !== roomId))
+        // Remove editor members from this room
+        const room = rooms.find(r => r.id === roomId)
+        if (room?.memberIds) {
+          setSelectedEditorMembers(selectedEditorMembers.filter(id => !room.memberIds?.includes(id)))
+        }
+      }
+    }
+    setExpandedViewerRooms(newExpanded)
+  }
+
+  // Toggle member selection
+  const toggleEditorMember = (memberId: string, roomId: string) => {
+    if (selectedEditorMembers.includes(memberId)) {
+      setSelectedEditorMembers(selectedEditorMembers.filter(id => id !== memberId))
+    } else {
+      setSelectedEditorMembers([...selectedEditorMembers, memberId])
+      // Remove from viewers if it's there
+      setSelectedViewerMembers(selectedViewerMembers.filter(id => id !== memberId))
+    }
+  }
+
+  const toggleViewerMember = (memberId: string, roomId: string) => {
+    if (selectedViewerMembers.includes(memberId)) {
+      setSelectedViewerMembers(selectedViewerMembers.filter(id => id !== memberId))
+    } else {
+      setSelectedViewerMembers([...selectedViewerMembers, memberId])
+      // Remove from editors if it's there
+      setSelectedEditorMembers(selectedEditorMembers.filter(id => id !== memberId))
+    }
+  }
+
+  // Select all members in a room
+  const selectAllEditorMembers = (roomId: string) => {
+    const room = rooms.find(r => r.id === roomId)
+    if (room?.memberIds) {
+      const newMembers = [...new Set([...selectedEditorMembers, ...room.memberIds])]
+      setSelectedEditorMembers(newMembers)
+      // Remove from viewers
+      setSelectedViewerMembers(selectedViewerMembers.filter(id => !room.memberIds?.includes(id)))
+    }
+  }
+
+  const selectAllViewerMembers = (roomId: string) => {
+    const room = rooms.find(r => r.id === roomId)
+    if (room?.memberIds) {
+      const newMembers = [...new Set([...selectedViewerMembers, ...room.memberIds])]
+      setSelectedViewerMembers(newMembers)
+      // Remove from editors
+      setSelectedEditorMembers(selectedEditorMembers.filter(id => !room.memberIds?.includes(id)))
+    }
+  }
+
   // Filter files by selected room (if roomId is set, otherwise show all)
   const roomFiles = useMemo(() => {
-    if (selectedRoomId === 'all') {
-      return files
+    let filtered = files
+    
+    // Apply AI search results if active
+    if (aiSearchQuery.trim() && aiSearchResults.length > 0) {
+      filtered = aiSearchResults
     }
-    // Filter by roomId if files have it, otherwise show all files
-    const filtered = files.filter(file => file.roomId === selectedRoomId || file.sharedWith?.includes(selectedRoomId))
-    // If no files match the room filter, show all files (backend files don't have roomId yet)
-    return filtered.length > 0 ? filtered : files
-  }, [files, selectedRoomId])
+    
+    // Apply room filter
+    if (selectedRoomId !== 'all') {
+      const roomFiltered = filtered.filter(file => file.roomId === selectedRoomId || file.sharedWith?.includes(selectedRoomId))
+      // If no files match the room filter, show all files (backend files don't have roomId yet)
+      filtered = roomFiltered.length > 0 ? roomFiltered : filtered
+    }
+    
+    return filtered
+  }, [files, selectedRoomId, aiSearchQuery, aiSearchResults])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: async (acceptedFiles: globalThis.File[]) => {
-      if (!isAdmin) {
-        setToast({ message: 'Only admins can upload files', type: 'error' })
-        return
-      }
-      // Room selection is optional - allow uploads even without room selection
-      // if (!selectedRoomId || selectedRoomId === 'all') {
-      //   setToast({ message: 'Please select a room first', type: 'error' })
-      //   return
-      // }
-      
-      for (const file of acceptedFiles) {
-        await uploadFile(file)
+      // Show permission modal for first file, then upload
+      if (acceptedFiles.length > 0) {
+        setPendingFile(acceptedFiles[0])
+        setShowPermissionsModal(true)
+        // If multiple files, queue them (for now, handle one at a time)
       }
     },
-    disabled: !isAdmin
+    disabled: false
   })
 
-  const uploadFile = async (file: globalThis.File) => {
+  const handlePermissionConfirm = async () => {
+    if (!pendingFile) return
+    
+    // Use selected member IDs instead of room IDs
+    setShowPermissionsModal(false)
+    setValidating(true)
+    
+    try {
+      await uploadFile(pendingFile, selectedEditorMembers, selectedViewerMembers)
+    } finally {
+      setValidating(false)
+      setPendingFile(null)
+      setSelectedEditorRooms([])
+      setSelectedViewerRooms([])
+      setSelectedEditorMembers([])
+      setSelectedViewerMembers([])
+      setExpandedEditorRooms(new Set())
+      setExpandedViewerRooms(new Set())
+    }
+  }
+
+  const handlePermissionCancel = () => {
+    setShowPermissionsModal(false)
+    setPendingFile(null)
+    setSelectedEditorRooms([])
+    setSelectedViewerRooms([])
+    setSelectedEditorMembers([])
+    setSelectedViewerMembers([])
+    setExpandedEditorRooms(new Set())
+    setExpandedViewerRooms(new Set())
+  }
+
+  // AI Auto-tagging function
+  const getAITags = async (fileName: string, fileType: string, fileSize: number) => {
+    if (!autoTagEnabled) return []
+    
     try {
       const token = getToken() || 'mock-token-for-testing'
+      const response = await axios.post(
+        `${API_URL}/ai/auto-tag`,
+        {
+          fileName: fileName,
+          fileType: fileType,
+          content: `File: ${fileName}, Type: ${fileType}, Size: ${fileSize} bytes`
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+      return response.data.tags || []
+    } catch (error) {
+      console.log('AI auto-tagging failed, continuing without tags')
+      return []
+    }
+  }
+
+  const uploadFile = async (file: globalThis.File, editorMemberIds: string[] = [], viewerMemberIds: string[] = []) => {
+    try {
+      const token = getToken() || 'mock-token-for-testing'
+      
+      // AI Auto-tagging (if enabled)
+      let aiTags: string[] = []
+      if (autoTagEnabled) {
+        try {
+          aiTags = await getAITags(file.name, file.type, file.size)
+          if (aiTags.length > 0) {
+            setToast({ 
+              message: `AI suggested tags: ${aiTags.join(', ')}`, 
+              type: 'info' 
+            })
+          }
+        } catch (error) {
+          // Continue without tags if AI fails
+        }
+      }
       
       // Try to get upload URL first (checks if S3 is configured)
       try {
@@ -166,7 +417,7 @@ const FileManager = () => {
 
         // If direct upload is required (S3 not configured)
         if (useDirectUpload || !uploadUrl) {
-          return await uploadFileDirect(file, token)
+          return await uploadFileDirect(file, token, editorMemberIds, viewerMemberIds, aiTags)
         }
 
         // Step 2: Upload file to S3
@@ -179,7 +430,8 @@ const FileManager = () => {
         // Step 3: Calculate file hash (simplified - in production use crypto)
         const fileHash = `hash-${Date.now()}-${file.name}`
 
-        // Step 4: Complete upload
+        // Step 4: Complete upload with member-based permissions
+        const permissionMode = editorMemberIds.length > 0 || viewerMemberIds.length > 0 ? 'editors' : 'owner-only'
         const completeResponse = await axios.post(
           `${API_URL}/files/complete-upload`,
           {
@@ -187,7 +439,11 @@ const FileManager = () => {
             fileType: file.type,
             fileSize: file.size,
             s3Key: s3Key,
-            fileHash: fileHash
+            fileHash: fileHash,
+            editors: editorMemberIds, // Send member IDs
+            viewers: viewerMemberIds, // Send member IDs
+            permissionMode: permissionMode,
+            tags: aiTags // Include AI-generated tags
           },
           {
             headers: { Authorization: `Bearer ${token}` }
@@ -199,13 +455,13 @@ const FileManager = () => {
         
         setFiles(prev => [...prev, newFileItem])
         setToast({ 
-          message: `File "${file.name}" uploaded successfully`, 
+          message: `File "${file.name}" uploaded successfully${aiTags.length > 0 ? ` with AI tags: ${aiTags.join(', ')}` : ''}`, 
           type: 'success' 
         })
       } catch (s3Error: any) {
         // If S3 upload fails, fall back to direct upload
         console.log('S3 upload failed, using direct upload:', s3Error.message)
-        await uploadFileDirect(file, token)
+        await uploadFileDirect(file, token, editorMemberIds, viewerMemberIds, aiTags)
       }
     } catch (error: any) {
       console.error('Error uploading file:', error)
@@ -216,9 +472,16 @@ const FileManager = () => {
     }
   }
 
-  const uploadFileDirect = async (file: globalThis.File, token: string) => {
+  const uploadFileDirect = async (file: globalThis.File, token: string, editorMemberIds: string[] = [], viewerMemberIds: string[] = [], aiTags: string[] = []) => {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('editors', JSON.stringify(editorMemberIds))
+    formData.append('viewers', JSON.stringify(viewerMemberIds))
+    const permissionMode = editorMemberIds.length > 0 || viewerMemberIds.length > 0 ? 'editors' : 'owner-only'
+    formData.append('permissionMode', permissionMode)
+    if (aiTags.length > 0) {
+      formData.append('tags', JSON.stringify(aiTags))
+    }
 
     const response = await axios.post(
       `${API_URL}/files/direct-upload`,
@@ -236,13 +499,75 @@ const FileManager = () => {
     
     setFiles(prev => [...prev, newFileItem])
     setToast({ 
-      message: `File "${file.name}" uploaded successfully`, 
+      message: `File "${file.name}" uploaded successfully${aiTags.length > 0 ? ` with AI tags: ${aiTags.join(', ')}` : ''}`, 
       type: 'success' 
     })
   }
 
+  // AI-powered file search
+  const handleAISearch = async () => {
+    if (!aiSearchQuery.trim()) {
+      setAiSearchResults([])
+      return
+    }
+
+    setIsAiSearching(true)
+    try {
+      const token = getToken() || 'mock-token-for-testing'
+      const response = await axios.post(
+        `${API_URL}/ai/file-search`,
+        {
+          query: aiSearchQuery,
+          files: files.map(f => ({
+            name: f.name,
+            type: f.type,
+            size: f.size
+          }))
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+
+      const relevantFileNames = response.data.files?.map((f: any) => f.name) || []
+      const filteredFiles = files.filter(f => relevantFileNames.includes(f.name))
+      setAiSearchResults(filteredFiles)
+      
+      if (filteredFiles.length === 0) {
+        setToast({ 
+          message: 'No files found matching your search query', 
+          type: 'info' 
+        })
+      }
+    } catch (error: any) {
+      console.error('AI search error:', error)
+      setToast({ 
+        message: 'AI search failed. Using regular search instead.', 
+        type: 'warning' 
+      })
+      // Fallback to regular search
+      const filtered = files.filter(f => 
+        f.name.toLowerCase().includes(aiSearchQuery.toLowerCase())
+      )
+      setAiSearchResults(filtered)
+    } finally {
+      setIsAiSearching(false)
+    }
+  }
+
+
+
   const handleDownload = async (file: FileItem) => {
     try {
+      // Check if this is a localStorage-only file (no backend ID)
+      if (!(file as any)._backendId) {
+        setToast({ 
+          message: `File "${file.name}" is stored locally. MongoDB is required to download backend files.`, 
+          type: 'info' 
+        })
+        return
+      }
+
       const fileId = (file as any)._backendId || file.id
       const token = getToken() || 'mock-token-for-testing'
       
@@ -283,6 +608,16 @@ const FileManager = () => {
     } catch (error: any) {
       console.error('Error downloading file:', error)
       
+      // Check for MongoDB connection error
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to download file'
+      if (errorMessage.includes('Database not available') || errorMessage.includes('MongoDB')) {
+        setToast({ 
+          message: 'MongoDB is not running. Please start MongoDB to access files. Run: brew services start mongodb-community (if installed via Homebrew) or start your MongoDB service.', 
+          type: 'error' 
+        })
+        return
+      }
+      
       // Try to parse error message from blob response
       if (error.response && error.response.data instanceof Blob) {
         try {
@@ -300,7 +635,7 @@ const FileManager = () => {
         }
       } else {
         setToast({ 
-          message: error.response?.data?.error || error.message || 'Failed to download file', 
+          message: errorMessage, 
           type: 'error' 
         })
       }
@@ -478,8 +813,22 @@ const FileManager = () => {
         {/* Page Header */}
         <div className="page-header">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h1 className="page-title">Files</h1>
-            {isAdmin && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="page-title">Files</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoTagEnabled}
+                  onChange={(e) => setAutoTagEnabled(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                />
+                <span className="flex items-center gap-1">
+                  <FaMagic className="text-xs" />
+                  Auto-tag
+                </span>
+              </label>
               <div className="inline-block">
                 <input {...getInputProps()} ref={fileInputRef} style={{ display: 'none' }} />
                 <button 
@@ -496,6 +845,69 @@ const FileManager = () => {
                 >
                   <FaUpload /> Upload File
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* AI-Powered Search Bar */}
+        <div className="mb-6">
+          <div className="card p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 relative">
+                <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
+                <input
+                  type="text"
+                  value={aiSearchQuery}
+                  onChange={(e) => {
+                    setAiSearchQuery(e.target.value)
+                    if (!e.target.value.trim()) {
+                      setAiSearchResults([])
+                    }
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleAISearch()
+                    }
+                  }}
+                  placeholder="Search files with AI... (e.g., 'find budget documents', 'show presentation files')"
+                  className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <button
+                onClick={handleAISearch}
+                disabled={isAiSearching || !aiSearchQuery.trim()}
+                className="px-4 py-3 bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white rounded-xl font-semibold transition-all shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isAiSearching ? (
+                  <>
+                    <FaRobot className="animate-pulse" />
+                    <span>Searching...</span>
+                  </>
+                ) : (
+                  <>
+                    <FaRobot />
+                    <span>AI Search</span>
+                  </>
+                )}
+              </button>
+              {aiSearchQuery && (
+                <button
+                  onClick={() => {
+                    setAiSearchQuery('')
+                    setAiSearchResults([])
+                  }}
+                  className="px-3 py-3 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                  title="Clear search"
+                >
+                  <FaTimes />
+                </button>
+              )}
+            </div>
+            {aiSearchQuery && aiSearchResults.length > 0 && (
+              <div className="mt-3 text-sm text-gray-600 dark:text-gray-400 flex items-center gap-2">
+                <FaCheckCircle className="text-green-500" />
+                <span>Found {aiSearchResults.length} file{aiSearchResults.length !== 1 ? 's' : ''} matching your query</span>
               </div>
             )}
           </div>
@@ -526,25 +938,23 @@ const FileManager = () => {
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <FaFile className="text-4xl mx-auto mb-3 opacity-50" />
               <p>No files {selectedRoomId !== 'all' && selectedRoom ? `in ${selectedRoom.name}` : 'available'}</p>
-              {isAdmin && (
-                <div className="mt-4 inline-block">
-                  <input {...getInputProps()} ref={fileInputRef2} style={{ display: 'none' }} />
-                  <button 
-                    type="button"
-                    className="btn-primary cursor-pointer"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      // Trigger file input click
-                      if (fileInputRef2.current) {
-                        fileInputRef2.current.click()
-                      }
-                    }}
-                  >
-                    Upload First File
-                  </button>
-                </div>
-              )}
+              <div className="mt-4 inline-block">
+                <input {...getInputProps()} ref={fileInputRef2} style={{ display: 'none' }} />
+                <button 
+                  type="button"
+                  className="btn-primary cursor-pointer"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    // Trigger file input click
+                    if (fileInputRef2.current) {
+                      fileInputRef2.current.click()
+                    }
+                  }}
+                >
+                  Upload First File
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -575,6 +985,36 @@ const FileManager = () => {
                           <span>•</span>
                           <span>by {file.owner}</span>
                         </div>
+                        {/* Permission indicators */}
+                        {((file.editors && file.editors.length > 0) || (file.viewers && file.viewers.length > 0)) ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {file.editors && file.editors.length > 0 && (
+                              <div className="flex items-center gap-1 px-2 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-full">
+                                <FaUserEdit className="text-xs text-purple-600 dark:text-purple-400" />
+                                <span className="text-xs text-purple-700 dark:text-purple-300 font-semibold">
+                                  {file.editors.length} member{file.editors.length !== 1 ? 's' : ''} can edit
+                                </span>
+                              </div>
+                            )}
+                            {file.viewers && file.viewers.length > 0 && (
+                              <div className="flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                <FaUser className="text-xs text-green-600 dark:text-green-400" />
+                                <span className="text-xs text-green-700 dark:text-green-300 font-semibold">
+                                  {file.viewers.length} member{file.viewers.length !== 1 ? 's' : ''} can view only
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                        {/* Show if current user can control this file */}
+                        {canManageFile(file) && !isAdmin && (
+                          <div className="mt-2 flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full w-fit">
+                            <FaUserEdit className="text-xs text-blue-600 dark:text-blue-400" />
+                            <span className="text-xs text-blue-700 dark:text-blue-300 font-semibold">
+                              You can control this file
+                            </span>
+                          </div>
+                        )}
                         {file.instructionNote && (
                           <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                             <p className="text-xs text-gray-700 dark:text-gray-300">
@@ -599,7 +1039,7 @@ const FileManager = () => {
                       >
                         <FaFile />
                       </button>
-                      {isAdmin && (
+                      {(isAdmin || canManageFile(file)) && (
                         <>
                           <button
                             onClick={() => {
@@ -612,28 +1052,32 @@ const FileManager = () => {
                           >
                             <FaEdit />
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedFile(file)
-                              setLabelValue(file.adminLabel || '')
-                              setShowLabelModal(true)
-                            }}
-                            className="btn-secondary px-3 py-1.5"
-                            title="Set Label"
-                          >
-                            <FaTag />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedFile(file)
-                              setInstructionValue(file.instructionNote || '')
-                              setShowInstructionModal(true)
-                            }}
-                            className="btn-secondary px-3 py-1.5"
-                            title="Add Instruction"
-                          >
-                            <FaStickyNote />
-                          </button>
+                          {isAdmin && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(file)
+                                  setLabelValue(file.adminLabel || '')
+                                  setShowLabelModal(true)
+                                }}
+                                className="btn-secondary px-3 py-1.5"
+                                title="Set Label"
+                              >
+                                <FaTag />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(file)
+                                  setInstructionValue(file.instructionNote || '')
+                                  setShowInstructionModal(true)
+                                }}
+                                className="btn-secondary px-3 py-1.5"
+                                title="Add Instruction"
+                              >
+                                <FaStickyNote />
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => {
                               setSelectedFile(file)
@@ -694,6 +1138,34 @@ const FileManager = () => {
                   <span className="text-gray-600 dark:text-gray-400">Owner:</span>
                   <span className="text-gray-900 dark:text-white font-semibold">{selectedFile.owner}</span>
                 </div>
+                {/* Editor Members Information */}
+                {selectedFile.editors && selectedFile.editors.length > 0 && (
+                  <div className="mt-4 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                    <p className="text-sm font-semibold text-purple-700 dark:text-purple-300 mb-2 flex items-center gap-2">
+                      <FaUserEdit className="text-sm" />
+                      Members who can edit:
+                    </p>
+                    <div className="space-y-1">
+                      {selectedFile.editors.map((memberId: string) => {
+                        const memberInfo = getUserInfo(memberId)
+                        return (
+                          <div key={memberId} className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                            <FaUser className="text-purple-600 dark:text-purple-400" />
+                            <span className="font-medium">{memberInfo.name}</span>
+                            {memberInfo.email && (
+                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                ({memberInfo.email})
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
+                      These members can edit, rename, and delete this file
+                    </p>
+                  </div>
+                )}
                 {selectedFile.instructionNote && (
                   <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Instruction Note:</p>
@@ -714,16 +1186,15 @@ const FileManager = () => {
         </Modal>
 
         {/* Rename Modal */}
-        {isAdmin && (
-          <Modal
-            isOpen={showRenameModal}
-            onClose={() => {
-              setShowRenameModal(false)
-              setSelectedFile(null)
-              setRenameValue('')
-            }}
-            title="Rename File"
-          >
+        <Modal
+          isOpen={showRenameModal}
+          onClose={() => {
+            setShowRenameModal(false)
+            setSelectedFile(null)
+            setRenameValue('')
+          }}
+          title="Rename File"
+        >
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -757,8 +1228,7 @@ const FileManager = () => {
                 </button>
               </div>
             </div>
-          </Modal>
-        )}
+        </Modal>
 
         {/* Label Modal */}
         {isAdmin && (
@@ -872,6 +1342,411 @@ const FileManager = () => {
             confirmVariant="danger"
           />
         )}
+
+        {/* Permissions Modal */}
+        <Modal
+          isOpen={showPermissionsModal}
+          onClose={handlePermissionCancel}
+          title="Configure File Access Control"
+        >
+          {pendingFile && (
+            <div className="space-y-6">
+              {/* File Info */}
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
+                <div className="flex items-center gap-3">
+                  <FaFile className="text-blue-600 dark:text-blue-400 text-xl" />
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">{pendingFile.name}</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      {formatFileSize(pendingFile.size)} • {pendingFile.type}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Editors Section */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    <FaUserEdit className="text-purple-600 dark:text-purple-400" />
+                    <span>Select Members Who Can Edit</span>
+                  </label>
+                  {selectedEditorMembers.length > 0 && (
+                    <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-xs font-semibold">
+                      {selectedEditorMembers.length} member{selectedEditorMembers.length !== 1 ? 's' : ''} selected
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-96 overflow-y-auto space-y-2 border-2 border-purple-200 dark:border-purple-800 rounded-xl p-3 bg-purple-50/30 dark:bg-purple-900/10">
+                  {rooms.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                      لا توجد غرف متاحة. قم بإنشاء غرفة أولاً
+                    </p>
+                  ) : (
+                    rooms.map((room) => {
+                      const isExpanded = expandedEditorRooms.has(room.id)
+                      const roomMembers = room.memberIds || []
+                      const selectedInRoom = roomMembers.filter(id => selectedEditorMembers.includes(id))
+                      
+                      return (
+                        <div key={room.id} className="border-2 border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-700">
+                          {/* Room Header */}
+                          <button
+                            onClick={() => toggleEditorRoom(room.id)}
+                            className={`w-full p-3 transition-all text-left ${
+                              selectedEditorRooms.includes(room.id)
+                                ? 'bg-purple-100 dark:bg-purple-900/30'
+                                : 'hover:bg-gray-50 dark:hover:bg-gray-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className={`p-2 rounded-lg ${
+                                  selectedEditorRooms.includes(room.id)
+                                    ? 'bg-purple-200 dark:bg-purple-800'
+                                    : 'bg-gray-100 dark:bg-gray-600'
+                                }`}>
+                                  <FaDoorOpen className={`${
+                                    selectedEditorRooms.includes(room.id)
+                                      ? 'text-purple-600 dark:text-purple-400'
+                                      : 'text-gray-500 dark:text-gray-400'
+                                  }`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className={`font-semibold text-sm truncate ${
+                                    selectedEditorRooms.includes(room.id)
+                                      ? 'text-purple-900 dark:text-purple-100'
+                                      : 'text-gray-900 dark:text-white'
+                                  }`}>
+                                    {room.name}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <FaUsers className="text-xs text-gray-500 dark:text-gray-400" />
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      {room.members} member{room.members !== 1 ? 's' : ''}
+                                    </span>
+                                    {selectedInRoom.length > 0 && (
+                                      <>
+                                        <span className="text-gray-400">•</span>
+                                        <span className="text-xs text-purple-600 dark:text-purple-400 font-semibold">
+                                          {selectedInRoom.length} selected
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {selectedInRoom.length > 0 && selectedInRoom.length === roomMembers.length && (
+                                  <span className="text-xs text-purple-600 dark:text-purple-400 font-semibold">
+                                    All
+                                  </span>
+                                )}
+                                <FaChevronRight className={`text-xs text-gray-500 dark:text-gray-400 transition-transform ${
+                                  isExpanded ? 'rotate-90' : ''
+                                }`} />
+                              </div>
+                            </div>
+                          </button>
+                          
+                          {/* Room Members List */}
+                          {isExpanded && roomMembers.length > 0 && (
+                            <div className="border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-2 space-y-1">
+                              <div className="flex items-center justify-between mb-2 px-2">
+                                <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">
+                                  Room Members:
+                                </span>
+                                {selectedInRoom.length < roomMembers.length && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      selectAllEditorMembers(room.id)
+                                    }}
+                                    className="text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 font-semibold"
+                                  >
+                                    Select All
+                                  </button>
+                                )}
+                              </div>
+                              {roomMembers.map((memberId) => {
+                                const memberInfo = getUserInfo(memberId)
+                                const isSelected = selectedEditorMembers.includes(memberId)
+                                return (
+                                  <button
+                                    key={memberId}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleEditorMember(memberId, room.id)
+                                    }}
+                                    className={`w-full p-2 rounded-lg text-left transition-all flex items-center gap-2 ${
+                                      isSelected
+                                        ? 'bg-purple-100 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700'
+                                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    }`}
+                                  >
+                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
+                                      isSelected
+                                        ? 'border-purple-600 bg-purple-600 dark:bg-purple-500'
+                                        : 'border-gray-300 dark:border-gray-600'
+                                    }`}>
+                                      {isSelected && (
+                                        <FaCheckCircle className="text-white text-xs" />
+                                      )}
+                                    </div>
+                                    <FaUser className="text-xs text-gray-500 dark:text-gray-400" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                        {memberInfo.name}
+                                      </p>
+                                      {memberInfo.email && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                          {memberInfo.email}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                  <FaLock className="text-xs" />
+                  Selected members can edit and download
+                </p>
+              </div>
+
+              {/* Viewers Section */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    <FaUser className="text-green-600 dark:text-green-400" />
+                    <span>Select Members Who Can View Only</span>
+                  </label>
+                  {selectedViewerMembers.length > 0 && (
+                    <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-xs font-semibold">
+                      {selectedViewerMembers.length} member{selectedViewerMembers.length !== 1 ? 's' : ''} selected
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-96 overflow-y-auto space-y-2 border-2 border-green-200 dark:border-green-800 rounded-xl p-3 bg-green-50/30 dark:bg-green-900/10">
+                  {rooms.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                      لا توجد غرف متاحة. قم بإنشاء غرفة أولاً
+                    </p>
+                  ) : (
+                    rooms.filter(room => !selectedEditorRooms.includes(room.id)).map((room) => {
+                      const isExpanded = expandedViewerRooms.has(room.id)
+                      const roomMembers = room.memberIds || []
+                      const selectedInRoom = roomMembers.filter(id => selectedViewerMembers.includes(id))
+                      
+                      return (
+                        <div key={room.id} className="border-2 border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-700">
+                          {/* Room Header */}
+                          <button
+                            onClick={() => toggleViewerRoom(room.id)}
+                            className={`w-full p-3 transition-all text-left ${
+                              selectedViewerRooms.includes(room.id)
+                                ? 'bg-green-100 dark:bg-green-900/30'
+                                : 'hover:bg-gray-50 dark:hover:bg-gray-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className={`p-2 rounded-lg ${
+                                  selectedViewerRooms.includes(room.id)
+                                    ? 'bg-green-200 dark:bg-green-800'
+                                    : 'bg-gray-100 dark:bg-gray-600'
+                                }`}>
+                                  <FaDoorOpen className={`${
+                                    selectedViewerRooms.includes(room.id)
+                                      ? 'text-green-600 dark:text-green-400'
+                                      : 'text-gray-500 dark:text-gray-400'
+                                  }`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className={`font-semibold text-sm truncate ${
+                                    selectedViewerRooms.includes(room.id)
+                                      ? 'text-green-900 dark:text-green-100'
+                                      : 'text-gray-900 dark:text-white'
+                                  }`}>
+                                    {room.name}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <FaUsers className="text-xs text-gray-500 dark:text-gray-400" />
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      {room.members} member{room.members !== 1 ? 's' : ''}
+                                    </span>
+                                    {selectedInRoom.length > 0 && (
+                                      <>
+                                        <span className="text-gray-400">•</span>
+                                        <span className="text-xs text-green-600 dark:text-green-400 font-semibold">
+                                          {selectedInRoom.length} selected
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {selectedInRoom.length > 0 && selectedInRoom.length === roomMembers.length && (
+                                  <span className="text-xs text-green-600 dark:text-green-400 font-semibold">
+                                    All
+                                  </span>
+                                )}
+                                <FaChevronRight className={`text-xs text-gray-500 dark:text-gray-400 transition-transform ${
+                                  isExpanded ? 'rotate-90' : ''
+                                }`} />
+                              </div>
+                            </div>
+                          </button>
+                          
+                          {/* Room Members List */}
+                          {isExpanded && roomMembers.length > 0 && (
+                            <div className="border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-2 space-y-1">
+                              <div className="flex items-center justify-between mb-2 px-2">
+                                <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">
+                                  Room Members:
+                                </span>
+                                {selectedInRoom.length < roomMembers.length && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      selectAllViewerMembers(room.id)
+                                    }}
+                                    className="text-xs text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 font-semibold"
+                                  >
+                                    Select All
+                                  </button>
+                                )}
+                              </div>
+                              {roomMembers.map((memberId) => {
+                                const memberInfo = getUserInfo(memberId)
+                                const isSelected = selectedViewerMembers.includes(memberId)
+                                return (
+                                  <button
+                                    key={memberId}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleViewerMember(memberId, room.id)
+                                    }}
+                                    className={`w-full p-2 rounded-lg text-left transition-all flex items-center gap-2 ${
+                                      isSelected
+                                        ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
+                                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    }`}
+                                  >
+                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
+                                      isSelected
+                                        ? 'border-green-600 bg-green-600 dark:bg-green-500'
+                                        : 'border-gray-300 dark:border-gray-600'
+                                    }`}>
+                                      {isSelected && (
+                                        <FaCheckCircle className="text-white text-xs" />
+                                      )}
+                                    </div>
+                                    <FaUser className="text-xs text-gray-500 dark:text-gray-400" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                        {memberInfo.name}
+                                      </p>
+                                      {memberInfo.email && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                          {memberInfo.email}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                  <FaUnlock className="text-xs" />
+                  Selected members can only view and download
+                </p>
+              </div>
+
+              {/* Summary */}
+              {(selectedEditorMembers.length > 0 || selectedViewerMembers.length > 0) && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
+                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Access Summary</p>
+                  <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                    {selectedEditorMembers.length > 0 && (
+                      <p>• {selectedEditorMembers.length} member{selectedEditorMembers.length !== 1 ? 's' : ''} can edit</p>
+                    )}
+                    {selectedViewerMembers.length > 0 && (
+                      <p>• {selectedViewerMembers.length} member{selectedViewerMembers.length !== 1 ? 's' : ''} can view only</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Old Summary (for reference) */}
+              {false && (selectedEditorRooms.length > 0 || selectedViewerRooms.length > 0) && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
+                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    <FaCheckCircle className="text-blue-600 dark:text-blue-400" />
+                    Access Summary
+                  </p>
+                  <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                    {selectedEditorRooms.length > 0 && (
+                      <p className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                        {selectedEditorRooms.length} room{selectedEditorRooms.length !== 1 ? 's' : ''} with edit access
+                        ({selectedEditorRooms.reduce((sum, id) => sum + (rooms.find(r => r.id === id)?.members || 0), 0)} members)
+                      </p>
+                    )}
+                    {selectedViewerRooms.length > 0 && (
+                      <p className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                        {selectedViewerRooms.length} room{selectedViewerRooms.length !== 1 ? 's' : ''} with view access
+                        ({selectedViewerRooms.reduce((sum, id) => sum + (rooms.find(r => r.id === id)?.members || 0), 0)} members)
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handlePermissionCancel}
+                  className="btn-secondary flex-1"
+                  disabled={validating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handlePermissionConfirm}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                  disabled={validating}
+                >
+                  {validating ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaUpload />
+                      <span>Upload with Permissions</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </Modal>
 
         {/* Toast */}
         {toast && (

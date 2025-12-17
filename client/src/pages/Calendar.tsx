@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo } from 'react-icons/fa'
+import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaRobot, FaSpinner, FaLightbulb } from 'react-icons/fa'
+import axios from 'axios'
+import { getToken } from '../utils/auth'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { EVENTS_KEY } from '../data/keys'
@@ -31,6 +33,11 @@ const Calendar = () => {
   const [showEventDetailsModal, setShowEventDetailsModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
+  
+  // AI features state
+  const [showAiScheduling, setShowAiScheduling] = useState(false)
+  const [aiSchedulingSuggestions, setAiSchedulingSuggestions] = useState<string>('')
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false)
   
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -243,6 +250,36 @@ const Calendar = () => {
     })
   }
 
+  // AI Scheduling Suggestions
+  const getAISchedulingSuggestions = async () => {
+    setShowAiScheduling(true)
+    setAiSchedulingSuggestions('')
+    setIsGeneratingSuggestions(true)
+    
+    try {
+      const token = getToken() || 'mock-token-for-testing'
+      const participants = ['Current User']
+      const duration = '30 minutes'
+      const preferences = {
+        workingHours: '9:00 AM - 5:00 PM',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      }
+      
+      const response = await axios.post(
+        '/api/ai/scheduling-suggestions',
+        { participants, duration, preferences },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      
+      setAiSchedulingSuggestions(response.data.suggestions || 'Unable to generate suggestions.')
+    } catch (error: any) {
+      console.error('AI scheduling error:', error)
+      setAiSchedulingSuggestions('Unable to generate scheduling suggestions at this time.')
+    } finally {
+      setIsGeneratingSuggestions(false)
+    }
+  }
+
   // Get days for month view
   const getMonthDays = () => {
     const year = currentDate.getFullYear()
@@ -331,15 +368,26 @@ const Calendar = () => {
       <div className="page-container">
         <div className="page-header">
           <div className="flex items-center justify-between">
-            <h1 className="page-title">Calendar</h1>
-            {isAdmin && (
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="btn-primary"
-              >
-                <FaPlus /> Add Event
-              </button>
-            )}
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <h1 className="page-title">Calendar</h1>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={getAISchedulingSuggestions}
+                  className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+                  title="Get AI scheduling suggestions"
+                >
+                  <FaRobot /> AI Scheduling
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="btn-primary"
+                  >
+                    <FaPlus /> Add Event
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -826,6 +874,52 @@ const Calendar = () => {
               </div>
             </div>
           )}
+        </Modal>
+
+        {/* AI Scheduling Suggestions Modal */}
+        <Modal
+          isOpen={showAiScheduling}
+          onClose={() => {
+            setShowAiScheduling(false)
+            setAiSchedulingSuggestions('')
+          }}
+          title="AI Scheduling Suggestions"
+        >
+          <div className="space-y-4">
+            <div className="bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                <FaRobot className="inline mr-2 text-blue-500" />
+                AI-powered scheduling suggestions:
+              </p>
+            </div>
+            <div className="bg-white dark:bg-gray-700 p-4 rounded-xl border border-gray-200 dark:border-gray-600 max-h-96 overflow-y-auto">
+              {isGeneratingSuggestions ? (
+                <div className="flex items-center justify-center py-8">
+                  <FaSpinner className="animate-spin text-blue-600 dark:text-blue-400 text-2xl" />
+                  <span className="ml-3 text-gray-600 dark:text-gray-400">Generating suggestions...</span>
+                </div>
+              ) : aiSchedulingSuggestions ? (
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{aiSchedulingSuggestions}</p>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                  No suggestions available
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setShowAiScheduling(false)
+                  setAiSchedulingSuggestions('')
+                }}
+                className="btn-secondary flex-1"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </Modal>
 
         {/* Toast */}

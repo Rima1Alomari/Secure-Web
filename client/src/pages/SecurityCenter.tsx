@@ -241,6 +241,7 @@ export default function SecurityCenter() {
     resetRuleForm()
   }
 
+
   const resetRuleForm = () => {
     setEditingRule(null)
     setRuleName('')
@@ -329,7 +330,9 @@ export default function SecurityCenter() {
       <div className="page-container">
         {/* Page Header */}
         <div className="page-header">
-          <h1 className="page-title">Security</h1>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="page-title">Security</h1>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -861,6 +864,7 @@ export default function SecurityCenter() {
           />
         )}
       </div>
+
     </div>
   )
 }

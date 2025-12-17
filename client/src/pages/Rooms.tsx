@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FaPlus, FaUsers, FaLock, FaUnlock, FaClock } from 'react-icons/fa'
-import { Modal } from '../components/common'
+import Modal from '../components/common/Modal'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
 import { Room, ChatMessage } from '../types/models'
@@ -88,6 +88,7 @@ const Rooms = () => {
     return date.toLocaleDateString()
   }
 
+
   if (isLoading) {
     return (
       <div className="page-content">
@@ -106,15 +107,17 @@ const Rooms = () => {
     <div className="page-content">
       <div className="page-container">
         <div className="flex justify-between items-center page-header">
-          <h1 className="page-title">Rooms</h1>
-          {role === 'admin' && (
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="btn-primary"
-            >
-              <FaPlus className="text-sm" /> Create Room
-            </button>
-          )}
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="page-title">Rooms</h1>
+            {role === 'admin' && (
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="btn-primary"
+              >
+                <FaPlus className="text-sm" /> Create Room
+              </button>
+            )}
+          </div>
         </div>
 
         {rooms.length === 0 ? (
@@ -246,6 +249,7 @@ const Rooms = () => {
             </div>
           </div>
         </Modal>
+
       </div>
     </div>
   )

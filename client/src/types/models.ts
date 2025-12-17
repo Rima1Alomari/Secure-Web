@@ -53,6 +53,12 @@ export interface FileItem {
   adminNote?: string // Admin note/description for shared files
   roomId?: string // Room/project this file belongs to
   instructionNote?: string // Admin instruction note for the file
+  // File access permissions
+  editors?: string[] // User IDs who can edit
+  viewers?: string[] // User IDs who can only view
+  permissionMode?: 'owner-only' | 'editors' | 'viewers' | 'public'
+  editorNames?: string[] // Editor names for display
+  viewerNames?: string[] // Viewer names for display
 }
 
 export interface SecurityLog {

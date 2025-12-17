@@ -10,8 +10,11 @@ import {
   FaDownload,
   FaCircle,
   FaChevronDown,
-  FaChevronUp
+  FaChevronUp,
+  FaRobot
 } from 'react-icons/fa'
+import axios from 'axios'
+import { getToken } from '../utils/auth'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, EVENTS_KEY, FILES_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
@@ -34,6 +37,7 @@ const Dashboard = () => {
   
   // Toast state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
+  
 
   useEffect(() => {
     // Simulate loading for 600ms
@@ -262,6 +266,7 @@ const Dashboard = () => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
+
   const getAdminLabelColor = (label?: string) => {
     switch (label) {
       case 'Important': return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
@@ -300,7 +305,9 @@ const Dashboard = () => {
       <div className="page-container">
         {/* Page Header */}
         <div className="page-header">
-          <h1 className="page-title">Dashboard</h1>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="page-title">Dashboard</h1>
+          </div>
         </div>
 
         {/* Admin-only Quick Actions */}

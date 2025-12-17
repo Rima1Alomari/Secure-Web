@@ -4,6 +4,7 @@ import User from '../models/User.js'
 import SecuritySettings from '../models/SecuritySettings.js'
 import { logAuditEvent } from '../utils/audit.js'
 import { deviceFingerprint } from '../middleware/security.js'
+import { authenticate } from '../middleware/auth.js'
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
@@ -101,6 +102,28 @@ router.post('/login', deviceFingerprint, async (req, res) => {
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role || 'user' } })
   } catch (error) {
     res.status(500).json({ error: error.message })
+  }
+})
+
+// Get all users (for permission selection)
+router.get('/users', authenticate, async (req, res) => {
+  try {
+    const mongoose = await import('mongoose')
+    if (mongoose.default.connection.readyState !== 1) {
+      return res.json([]) // Return empty array if MongoDB not connected
+    }
+
+    const users = await User.find({}).select('name email _id role').sort({ name: 1 })
+    res.json(users.map(u => ({
+      id: u._id.toString(),
+      _id: u._id.toString(),
+      name: u.name,
+      email: u.email,
+      role: u.role || 'user'
+    })))
+  } catch (error) {
+    console.error('Error fetching users:', error)
+    res.json([]) // Return empty array on error
   }
 })
 

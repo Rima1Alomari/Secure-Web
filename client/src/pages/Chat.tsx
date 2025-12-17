@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock } from 'react-icons/fa'
+import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaRobot, FaSpinner, FaMagic } from 'react-icons/fa'
+import axios from 'axios'
+import { getToken } from '../utils/auth'
+import Modal from '../components/common/Modal'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
 import { Room, ChatMessage, DirectChat } from '../types/models'
@@ -15,6 +18,11 @@ const Chat = () => {
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  
+  // AI features state
+  const [showAiReplies, setShowAiReplies] = useState(false)
+  const [aiReplySuggestions, setAiReplySuggestions] = useState<string[]>([])
+  const [isGeneratingReplies, setIsGeneratingReplies] = useState(false)
 
   // Get rooms
   const rooms = useMemo(() => {
@@ -151,6 +159,36 @@ const Chat = () => {
     if (diffHours < 24) return `${diffHours}h ago`
     if (diffDays < 7) return `${diffDays}d ago`
     return date.toLocaleDateString()
+  }
+
+  // AI Reply Suggestions
+  const getAIReplySuggestions = async () => {
+    if (!selectedChat || messages.length === 0) {
+      return
+    }
+    
+    setShowAiReplies(true)
+    setAiReplySuggestions([])
+    setIsGeneratingReplies(true)
+    
+    try {
+      const token = getToken() || 'mock-token-for-testing'
+      const lastMessage = messages[messages.length - 1]
+      const context = `Chat: ${selectedChat.name}, Last message: ${lastMessage.message}`
+      
+      const response = await axios.post(
+        '/api/ai/auto-reply',
+        { message: lastMessage.message, context },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      
+      setAiReplySuggestions(response.data.suggestions || [])
+    } catch (error: any) {
+      console.error('AI reply suggestions error:', error)
+      setAiReplySuggestions([])
+    } finally {
+      setIsGeneratingReplies(false)
+    }
   }
 
   // Get room chats with last message info
@@ -360,6 +398,14 @@ const Chat = () => {
                       className="flex-1 px-5 py-3.5 bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm shadow-sm"
                     />
                     <button
+                      onClick={getAIReplySuggestions}
+                      disabled={!selectedChat || messages.length === 0 || isGeneratingReplies}
+                      className="px-3 py-3.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-semibold transition-all shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Get AI reply suggestions"
+                    >
+                      <FaMagic />
+                    </button>
+                    <button
                       onClick={handleSendMessage}
                       className="btn-primary"
                     >
@@ -379,6 +425,64 @@ const Chat = () => {
             )}
           </div>
         </div>
+
+        {/* AI Reply Suggestions Modal */}
+        <Modal
+          isOpen={showAiReplies}
+          onClose={() => {
+            setShowAiReplies(false)
+            setAiReplySuggestions([])
+          }}
+          title="AI Reply Suggestions"
+        >
+          <div className="space-y-4">
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border border-purple-200 dark:border-purple-800">
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                <FaRobot className="inline mr-2 text-purple-500" />
+                AI-generated reply suggestions:
+              </p>
+            </div>
+            <div className="bg-white dark:bg-gray-700 p-4 rounded-xl border border-gray-200 dark:border-gray-600 max-h-96 overflow-y-auto">
+              {isGeneratingReplies ? (
+                <div className="flex items-center justify-center py-8">
+                  <FaSpinner className="animate-spin text-purple-600 dark:text-purple-400 text-2xl" />
+                  <span className="ml-3 text-gray-600 dark:text-gray-400">Generating suggestions...</span>
+                </div>
+              ) : aiReplySuggestions.length > 0 ? (
+                <div className="space-y-2">
+                  {aiReplySuggestions.map((suggestion, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setNewMessage(suggestion)
+                        setShowAiReplies(false)
+                        setAiReplySuggestions([])
+                      }}
+                      className="w-full text-left p-3 bg-gray-50 dark:bg-gray-600 hover:bg-gray-100 dark:hover:bg-gray-500 rounded-lg text-gray-700 dark:text-gray-300 transition-colors"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                  No suggestions available
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setShowAiReplies(false)
+                  setAiReplySuggestions([])
+                }}
+                className="btn-secondary flex-1"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
       </div>
     </div>
   )
