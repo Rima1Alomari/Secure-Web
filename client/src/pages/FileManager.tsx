@@ -49,12 +49,18 @@ const FileManager = () => {
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showNewDropdown, setShowNewDropdown] = useState(false)
+  const [showClassificationModal, setShowClassificationModal] = useState(false)
   
   // Form states
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [labelValue, setLabelValue] = useState<'Important' | 'Action' | 'Plan' | 'FYI' | ''>('')
   const [instructionValue, setInstructionValue] = useState('')
+  const [fileClassification, setFileClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
+  
+  // File upload queue
+  const [fileUploadQueue, setFileUploadQueue] = useState<Array<{ file: globalThis.File; classification: 'Normal' | 'Confidential' | 'Restricted' }>>([])
+  const [currentUploadFile, setCurrentUploadFile] = useState<globalThis.File | null>(null)
   
   // File input refs
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -130,18 +136,18 @@ const FileManager = () => {
       return
     }
 
-    try {
-      setLoading(true)
-      const token = getToken() || 'mock-token-for-testing'
-      const response = await axios.get(`${API_URL}/files`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      
-      const backendFiles = response.data || []
-      const mappedFiles = backendFiles.map(mapBackendFileToFileItem)
-      setFiles(mappedFiles)
-    } catch (error: any) {
-      console.error('Error fetching files:', error)
+      try {
+        setLoading(true)
+        const token = getToken() || 'mock-token-for-testing'
+        const response = await axios.get(`${API_URL}/files`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        const backendFiles = response.data || []
+        const mappedFiles = backendFiles.map(mapBackendFileToFileItem)
+        setFiles(mappedFiles)
+      } catch (error: any) {
+        console.error('Error fetching files:', error)
       
       // Only show error toast if:
       // 1. User explicitly triggered the action (showErrors = true)
@@ -166,8 +172,8 @@ const FileManager = () => {
       // Fallback to localStorage files
       const localFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
       setFiles(localFiles)
-    } finally {
-      setLoading(false)
+      } finally {
+        setLoading(false)
       setUserActionTriggered(false)
     }
   }
@@ -207,30 +213,70 @@ const FileManager = () => {
     }
     // Filter by roomId if files have it, otherwise show all files
     const filtered = files.filter(file => file.roomId === selectedRoomId || file.sharedWith?.includes(selectedRoomId))
-    // If no files match the room filter, show all files (backend files don't have roomId yet)
+      // If no files match the room filter, show all files (backend files don't have roomId yet)
     return filtered.length > 0 ? filtered : files
   }, [files, selectedRoomId])
-
+    
   const { getInputProps } = useDropzone({
     onDrop: async (acceptedFiles: globalThis.File[]) => {
       if (!isAdmin) {
         setToast({ message: 'Only admins can upload files', type: 'error' })
         return
       }
-      // Room selection is optional - allow uploads even without room selection
-      // if (!selectedRoomId || selectedRoomId === 'all') {
-      //   setToast({ message: 'Please select a room first', type: 'error' })
-      //   return
-      // }
       
-      for (const file of acceptedFiles) {
-        await uploadFile(file)
+      // If only one file, show classification modal immediately
+      if (acceptedFiles.length === 1) {
+        setCurrentUploadFile(acceptedFiles[0])
+        setFileClassification('Normal')
+        setShowClassificationModal(true)
+      } else {
+        // For multiple files, process them one by one
+        setCurrentUploadFile(acceptedFiles[0])
+        setFileClassification('Normal')
+        setShowClassificationModal(true)
+        // Store remaining files in queue
+        setFileUploadQueue(acceptedFiles.slice(1).map(file => ({ file, classification: 'Normal' as const })))
       }
     },
     disabled: !isAdmin
   })
 
-  const uploadFile = async (file: globalThis.File) => {
+  const handleClassificationConfirm = async () => {
+    if (!currentUploadFile) return
+    
+    // Upload the current file with selected classification
+    await uploadFile(currentUploadFile, fileClassification)
+    
+    // Process next file in queue if any
+    if (fileUploadQueue.length > 0) {
+      const nextFile = fileUploadQueue[0].file
+      setCurrentUploadFile(nextFile)
+      setFileClassification('Normal')
+      setFileUploadQueue(prev => prev.slice(1))
+      // Keep modal open for next file
+    } else {
+      // No more files, close modal
+      setShowClassificationModal(false)
+      setCurrentUploadFile(null)
+      setFileClassification('Normal')
+    }
+  }
+
+  const handleClassificationCancel = () => {
+    // Skip current file and process next
+    if (fileUploadQueue.length > 0) {
+      const nextFile = fileUploadQueue[0].file
+      setCurrentUploadFile(nextFile)
+      setFileClassification('Normal')
+      setFileUploadQueue(prev => prev.slice(1))
+    } else {
+      setShowClassificationModal(false)
+      setCurrentUploadFile(null)
+      setFileClassification('Normal')
+    }
+  }
+
+  const uploadFile = async (file: globalThis.File, classification: 'Normal' | 'Confidential' | 'Restricted' = fileClassification) => {
     setUserActionTriggered(true) // Mark as user action
     try {
       const token = getToken() || 'mock-token-for-testing'
@@ -248,15 +294,16 @@ const FileManager = () => {
           ownerId: user?.id,
           roomId: selectedRoomId !== 'all' ? selectedRoomId : undefined,
           isTrashed: false,
-          isFolder: false
+          isFolder: false,
+          classification: classification
         }
         const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
         setJSON(FILES_KEY, [...allFiles, newFileItem])
         setFiles(prev => [...prev, newFileItem])
-        setToast({ 
+            setToast({ 
           message: `File "${file.name}" uploaded successfully (demo mode)`, 
           type: 'success' 
-        })
+            })
         return
       }
       
@@ -277,7 +324,7 @@ const FileManager = () => {
 
         // If direct upload is required (S3 not configured)
         if (useDirectUpload || !uploadUrl) {
-          return await uploadFileDirect(file, token)
+          return await uploadFileDirect(file, token, classification)
         }
 
         // Step 2: Upload file to S3
@@ -298,7 +345,8 @@ const FileManager = () => {
             fileType: file.type,
             fileSize: file.size,
             s3Key: s3Key,
-            fileHash: fileHash
+            fileHash: fileHash,
+            classification: classification
           },
           {
             headers: { Authorization: `Bearer ${token}` }
@@ -316,7 +364,7 @@ const FileManager = () => {
       } catch (s3Error: any) {
         // If S3 upload fails, fall back to direct upload
         console.log('S3 upload failed, using direct upload:', s3Error.message)
-        await uploadFileDirect(file, token)
+        await uploadFileDirect(file, token, classification)
       }
     } catch (error: any) {
       console.error('Error uploading file:', error)
@@ -328,9 +376,10 @@ const FileManager = () => {
     }
   }
 
-  const uploadFileDirect = async (file: globalThis.File, token: string) => {
+  const uploadFileDirect = async (file: globalThis.File, token: string, classification: 'Normal' | 'Confidential' | 'Restricted' = fileClassification) => {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('classification', classification)
 
     const response = await axios.post(
       `${API_URL}/files/direct-upload`,
@@ -357,6 +406,12 @@ const FileManager = () => {
     try {
       const fileId = (file as any)._backendId || file.id
       const token = getToken() || 'mock-token-for-testing'
+      
+      // Skip API call for local files (files with local- prefix)
+      if (fileId && fileId.toString().startsWith('local-')) {
+        setToast({ message: 'Local files cannot be downloaded from server', type: 'warning' })
+        return
+      }
       
       // First, try to get the download URL (for S3 files) or file (for local files)
       const response = await axios.get(
@@ -435,6 +490,21 @@ const FileManager = () => {
       const fileId = (selectedFile as any)._backendId || selectedFile.id
       const token = getToken() || 'mock-token-for-testing'
       
+      // Skip API call for local files (files with local- prefix)
+      if (fileId && fileId.toString().startsWith('local-')) {
+        // Update locally only
+        setFiles(prev => prev.map(f => 
+          f.id === selectedFile.id 
+            ? { ...f, name: renameValue }
+            : f
+        ))
+        setToast({ message: 'File renamed (local only)', type: 'info' })
+        setShowRenameModal(false)
+        setSelectedFile(null)
+        setRenameValue('')
+        return
+      }
+      
       // Note: Backend doesn't have a rename endpoint, so we'll update locally
       // In a real implementation, you'd add a PATCH endpoint to update file name
       await axios.patch(
@@ -478,6 +548,19 @@ const FileManager = () => {
     try {
       const fileId = (selectedFile as any)._backendId || selectedFile.id
       const token = getToken() || 'mock-token-for-testing'
+      
+      // Skip API call for local files (files with local- prefix)
+      if (fileId && fileId.toString().startsWith('local-')) {
+        // Remove from localStorage
+        const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
+        const updatedFiles = allFiles.filter(f => f.id !== selectedFile.id)
+        setJSON(FILES_KEY, updatedFiles)
+        setFiles(prev => prev.filter(f => f.id !== selectedFile.id))
+        setToast({ message: 'File deleted (local only)', type: 'success' })
+        setShowDeleteConfirm(false)
+        setSelectedFile(null)
+        return
+      }
       
       // Skip API call in demo mode
       if (isDemoMode) {
@@ -583,6 +666,19 @@ const FileManager = () => {
     }
   }
 
+  const getClassificationColor = (level?: 'Normal' | 'Confidential' | 'Restricted') => {
+    switch (level) {
+      case 'Normal':
+        return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700'
+      case 'Confidential':
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700'
+      case 'Restricted':
+        return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700'
+      default:
+        return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700'
+    }
+  }
+
   if (loading) {
     return (
       <div className="page-content">
@@ -622,12 +718,12 @@ const FileManager = () => {
         {/* Page Header */}
         <div className="page-header">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h1 className="page-title">Files</h1>
+              <h1 className="page-title">Files</h1>
             {isAdmin && (
               <div className="flex items-center gap-2">
                 {/* + New Dropdown */}
                 <div className="relative" ref={newDropdownRef}>
-                  <button
+              <button
                     onClick={() => setShowNewDropdown(!showNewDropdown)}
                     className="btn-primary flex items-center gap-2"
                   >
@@ -657,8 +753,8 @@ const FileManager = () => {
                       >
                         <FaVoteYea className="text-green-600 dark:text-green-400" />
                         <span className="text-gray-900 dark:text-white">Vote</span>
-                      </button>
-                    </div>
+              </button>
+            </div>
                   )}
                 </div>
 
@@ -685,15 +781,16 @@ const FileManager = () => {
           </div>
         </div>
 
-        {/* Room Selector */}
-        <div className="mb-6">
+        {/* Room Selector and Classification */}
+        <div className="mb-6 flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
           <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
             Select Room/Project
           </label>
           <select
             value={selectedRoomId}
             onChange={(e) => setSelectedRoomId(e.target.value)}
-            className="w-full sm:w-auto px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
           >
             <option value="all">All Files</option>
             {rooms.map(room => (
@@ -702,6 +799,23 @@ const FileManager = () => {
               </option>
             ))}
           </select>
+          </div>
+          {isAdmin && (
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Data Classification Level
+              </label>
+              <select
+                value={fileClassification}
+                onChange={(e) => setFileClassification(e.target.value as 'Normal' | 'Confidential' | 'Restricted')}
+                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              >
+                <option value="Normal">Normal</option>
+                <option value="Confidential">Confidential</option>
+                <option value="Restricted">Restricted</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Files List */}
@@ -723,10 +837,15 @@ const FileManager = () => {
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <Icon className="text-blue-600 dark:text-blue-400 flex-shrink-0 text-xl" />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <h3 className="font-semibold text-gray-900 dark:text-white truncate">
                             {file.name}
                           </h3>
+                          {file.classification && (
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full border ${getClassificationColor(file.classification)}`}>
+                              {file.classification}
+                            </span>
+                          )}
                           {file.adminLabel && (
                             <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${getLabelColor(file.adminLabel)}`}>
                               {file.adminLabel}
@@ -777,28 +896,28 @@ const FileManager = () => {
                           >
                             <FaEdit />
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedFile(file)
-                              setLabelValue(file.adminLabel || '')
-                              setShowLabelModal(true)
-                            }}
-                            className="btn-secondary px-3 py-1.5"
-                            title="Set Label"
-                          >
-                            <FaTag />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedFile(file)
-                              setInstructionValue(file.instructionNote || '')
-                              setShowInstructionModal(true)
-                            }}
-                            className="btn-secondary px-3 py-1.5"
-                            title="Add Instruction"
-                          >
-                            <FaStickyNote />
-                          </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(file)
+                                  setLabelValue(file.adminLabel || '')
+                                  setShowLabelModal(true)
+                                }}
+                                className="btn-secondary px-3 py-1.5"
+                                title="Set Label"
+                              >
+                                <FaTag />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(file)
+                                  setInstructionValue(file.instructionNote || '')
+                                  setShowInstructionModal(true)
+                                }}
+                                className="btn-secondary px-3 py-1.5"
+                                title="Add Instruction"
+                              >
+                                <FaStickyNote />
+                              </button>
                           <button
                             onClick={() => {
                               setSelectedFile(file)
@@ -880,15 +999,15 @@ const FileManager = () => {
 
         {/* Rename Modal */}
         {isAdmin && (
-          <Modal
-            isOpen={showRenameModal}
-            onClose={() => {
-              setShowRenameModal(false)
-              setSelectedFile(null)
-              setRenameValue('')
-            }}
-            title="Rename File"
-          >
+        <Modal
+          isOpen={showRenameModal}
+          onClose={() => {
+            setShowRenameModal(false)
+            setSelectedFile(null)
+            setRenameValue('')
+          }}
+          title="Rename File"
+        >
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -922,7 +1041,7 @@ const FileManager = () => {
                 </button>
               </div>
             </div>
-          </Modal>
+        </Modal>
         )}
 
         {/* Label Modal */}
@@ -1020,6 +1139,59 @@ const FileManager = () => {
             </div>
           </Modal>
         )}
+
+        {/* Classification Selection Modal */}
+        <Modal
+          isOpen={showClassificationModal}
+          onClose={handleClassificationCancel}
+          title="Select Data Classification Level"
+        >
+          <div className="space-y-4">
+            {currentUploadFile && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  File: <span className="font-semibold text-gray-900 dark:text-white">{currentUploadFile.name}</span>
+                </p>
+                {fileUploadQueue.length > 0 && (
+                  <p className="text-xs text-gray-500 dark:text-gray-500">
+                    {fileUploadQueue.length} more file(s) waiting...
+                  </p>
+                )}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Data Classification Level *
+              </label>
+              <select
+                value={fileClassification}
+                onChange={(e) => setFileClassification(e.target.value as 'Normal' | 'Confidential' | 'Restricted')}
+                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              >
+                <option value="Normal">Normal - Standard business data, accessible to all authorized users</option>
+                <option value="Confidential">Confidential - Sensitive data, restricted access, requires admin/security roles</option>
+                <option value="Restricted">Restricted - Highly sensitive data, security role only with approval</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Select the appropriate classification level for this file
+              </p>
+            </div>
+            <div className="flex gap-3 pt-4">
+              <button
+                onClick={handleClassificationCancel}
+                className="btn-secondary flex-1"
+              >
+                {fileUploadQueue.length > 0 ? 'Skip' : 'Cancel'}
+              </button>
+              <button
+                onClick={handleClassificationConfirm}
+                className="btn-primary flex-1"
+              >
+                {fileUploadQueue.length > 0 ? 'Upload & Next' : 'Upload'}
+              </button>
+            </div>
+          </div>
+        </Modal>
 
         {/* Delete Confirmation */}
         {isAdmin && (

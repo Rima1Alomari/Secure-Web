@@ -538,6 +538,11 @@ router.get('/:id/download-url', authenticate, async (req, res) => {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
     }
 
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
+    }
+
     const file = await File.findById(req.params.id)
       .populate('editors', 'name email')
       .populate('viewers', 'name email')
@@ -600,6 +605,11 @@ router.delete('/:id', authenticate, deviceFingerprint, async (req, res) => {
     const mongoose = await import('mongoose')
     if (mongoose.default.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
     }
 
     const file = await File.findById(req.params.id)
@@ -674,6 +684,12 @@ router.delete('/:id', authenticate, deviceFingerprint, async (req, res) => {
 
 router.get('/:id/editor-config', authenticate, async (req, res) => {
   try {
+    // Validate ObjectId format
+    const mongoose = await import('mongoose')
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
+    }
+
     const file = await File.findById(req.params.id)
 
     if (!file) {
@@ -718,6 +734,11 @@ router.patch('/:id', authenticate, deviceFingerprint, async (req, res) => {
     const mongoose = await import('mongoose')
     if (mongoose.default.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
     }
 
     const file = await File.findById(req.params.id)
