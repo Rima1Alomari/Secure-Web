@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus } from 'react-icons/fa'
+import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus, FaTimes } from 'react-icons/fa'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
 import { Room, ChatMessage, DirectChat, AdminUserMock } from '../types/models'
@@ -16,6 +16,9 @@ const Chat = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [dmSearchQuery, setDmSearchQuery] = useState('')
+  const [messageSearchQuery, setMessageSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<ChatMessage[]>([])
+  const [showSearchResults, setShowSearchResults] = useState(false)
 
   // Get rooms
   const rooms = useMemo(() => {
@@ -87,15 +90,26 @@ const Chat = () => {
     )
   }, [directChats, dmSearchQuery])
 
-  // Get filtered users for "Start chat" when no DM exists
+  // Get filtered users for "Start chat" - show all users when no search, or filtered when searching
   const filteredUsersForChat = useMemo(() => {
-    if (!dmSearchQuery.trim() || directChats.length > 0) return []
+    const query = dmSearchQuery.toLowerCase().trim()
     
-    const query = dmSearchQuery.toLowerCase()
-    return allUsers
-      .filter(u => u.id !== user?.id && (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query)))
-      .slice(0, 10) // Limit to 10 results
-  }, [allUsers, dmSearchQuery, directChats.length, user?.id])
+    // Get users who don't have existing direct chats
+    const existingChatUserIds = new Set(directChats.map(chat => chat.userId))
+    const availableUsers = allUsers.filter(u => 
+      u.id !== user?.id && !existingChatUserIds.has(u.id)
+    )
+    
+    // If searching, filter by query; otherwise show all available users
+    if (query) {
+      return availableUsers
+        .filter(u => u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
+        .slice(0, 10)
+    } else {
+      // Show all available users (limit to 20 for performance)
+      return availableUsers.slice(0, 20)
+    }
+  }, [allUsers, dmSearchQuery, directChats, user?.id])
 
   const handleStartChat = (targetUserId: string, targetUserName: string) => {
     if (!user?.id) return
@@ -134,6 +148,24 @@ const Chat = () => {
 
     setMessages(chatMessages)
   }, [selectedChat, allMessages])
+
+  // Message search functionality
+  useEffect(() => {
+    if (!messageSearchQuery.trim() || !selectedChat) {
+      setSearchResults([])
+      setShowSearchResults(false)
+      return
+    }
+
+    const query = messageSearchQuery.toLowerCase()
+    const results = messages.filter(msg => 
+      msg.message.toLowerCase().includes(query) ||
+      msg.sender.toLowerCase().includes(query)
+    )
+    
+    setSearchResults(results)
+    setShowSearchResults(results.length > 0)
+  }, [messageSearchQuery, messages, selectedChat])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -299,13 +331,9 @@ const Chat = () => {
               </div>
 
               <div className="space-y-1 flex-1 overflow-y-auto">
-                {filteredDirectChats.length === 0 && filteredUsersForChat.length === 0 ? (
-                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
-                    {dmSearchQuery.trim() ? 'No users found' : 'No direct messages'}
-                  </p>
-                ) : (
+                {/* Existing Direct Chats */}
+                {filteredDirectChats.length > 0 && (
                   <>
-                    {/* Existing Direct Chats */}
                     {filteredDirectChats.map((chat) => (
                       <button
                         key={chat.id}
@@ -343,37 +371,46 @@ const Chat = () => {
                         )}
                       </button>
                     ))}
-
-                    {/* Users to Start Chat With (when no DM exists) */}
                     {filteredUsersForChat.length > 0 && (
-                      <>
-                        {filteredDirectChats.length > 0 && (
-                          <div className="border-t border-gray-200 dark:border-gray-700 my-2"></div>
-                        )}
-                        {filteredUsersForChat.map((userItem) => (
-                          <button
-                            key={userItem.id}
-                            onClick={() => handleStartChat(userItem.id, userItem.name)}
-                            className="w-full text-left p-2.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2"
-                          >
-                            <div className="w-7 h-7 bg-green-600 dark:bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-                              <FaUser className="text-white text-[10px]" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-                                {userItem.name}
-                              </h4>
-                              <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                                {userItem.email}
-                              </p>
-                            </div>
-                            <FaPlus className="text-blue-600 dark:text-blue-400 text-xs flex-shrink-0" />
-                          </button>
-                        ))}
-                      </>
+                      <div className="border-t border-gray-200 dark:border-gray-700 my-2"></div>
                     )}
                   </>
                 )}
+
+                {/* Users to Start Chat With - Always shown */}
+                {filteredUsersForChat.length > 0 ? (
+                  <>
+                    {filteredDirectChats.length === 0 && (
+                      <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-2 px-1">
+                        Available users to chat with:
+                      </p>
+                    )}
+                    {filteredUsersForChat.map((userItem) => (
+                      <button
+                        key={userItem.id}
+                        onClick={() => handleStartChat(userItem.id, userItem.name)}
+                        className="w-full text-left p-2.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2"
+                      >
+                        <div className="w-7 h-7 bg-green-600 dark:bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+                          <FaUser className="text-white text-[10px]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                            {userItem.name}
+                          </h4>
+                          <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                            {userItem.email}
+                          </p>
+                        </div>
+                        <FaPlus className="text-blue-600 dark:text-blue-400 text-xs flex-shrink-0" />
+                      </button>
+                    ))}
+                  </>
+                ) : filteredDirectChats.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
+                    {dmSearchQuery.trim() ? 'No users found' : 'No users available'}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -384,7 +421,7 @@ const Chat = () => {
               <>
                 {/* Chat Header */}
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 mb-3">
                     {selectedChat.type === 'room' ? (
                       <FaUsers className="text-blue-600 dark:text-blue-400" />
                     ) : (
@@ -396,6 +433,35 @@ const Chat = () => {
                       {selectedChat.name}
                     </h2>
                   </div>
+                  
+                  {/* Message Search */}
+                  <div className="relative">
+                    <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" />
+                    <input
+                      type="text"
+                      value={messageSearchQuery}
+                      onChange={(e) => setMessageSearchQuery(e.target.value)}
+                      placeholder="Search messages..."
+                      className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                    />
+                    {messageSearchQuery && (
+                      <button
+                        onClick={() => {
+                          setMessageSearchQuery('')
+                          setShowSearchResults(false)
+                        }}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      >
+                        <FaTimes className="text-xs" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  {showSearchResults && (
+                    <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Found {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+                    </div>
+                  )}
                 </div>
 
                 {/* Messages */}
@@ -406,31 +472,49 @@ const Chat = () => {
                       <p>No messages yet. Start the conversation!</p>
                     </div>
                   ) : (
-                    messages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`flex gap-3 ${msg.isOwn ? 'flex-row-reverse' : ''}`}
-                      >
-                        <div className="flex-shrink-0 w-10 h-10 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
-                          <FaUser className="text-white text-sm" />
-                        </div>
-                        <div className={`flex-1 ${msg.isOwn ? 'text-right' : ''}`}>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-semibold text-gray-900 dark:text-white">{msg.sender}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">{formatTime(msg.timestamp)}</span>
+                    messages.map((msg) => {
+                      const isSearchMatch = messageSearchQuery.trim() && (
+                        msg.message.toLowerCase().includes(messageSearchQuery.toLowerCase()) ||
+                        msg.sender.toLowerCase().includes(messageSearchQuery.toLowerCase())
+                      )
+                      
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex gap-3 ${msg.isOwn ? 'flex-row-reverse' : ''} ${
+                            isSearchMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-2 -m-2' : ''
+                          }`}
+                        >
+                          <div className="flex-shrink-0 w-10 h-10 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
+                            <FaUser className="text-white text-sm" />
                           </div>
-                          <div
-                            className={`inline-block px-5 py-3 rounded-xl shadow-lg ${
-                              msg.isOwn
-                                ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white'
-                                : 'bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 text-gray-900 dark:text-white'
-                            }`}
-                          >
-                            {msg.message}
+                          <div className={`flex-1 ${msg.isOwn ? 'text-right' : ''}`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-semibold text-gray-900 dark:text-white">{msg.sender}</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-400">{formatTime(msg.timestamp)}</span>
+                            </div>
+                            <div
+                              className={`inline-block px-5 py-3 rounded-xl shadow-lg ${
+                                msg.isOwn
+                                  ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white'
+                                  : 'bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 text-gray-900 dark:text-white'
+                              }`}
+                            >
+                              {messageSearchQuery.trim() ? (
+                                <span dangerouslySetInnerHTML={{
+                                  __html: msg.message.replace(
+                                    new RegExp(`(${messageSearchQuery})`, 'gi'),
+                                    '<mark class="bg-yellow-300 dark:bg-yellow-600">$1</mark>'
+                                  )
+                                }} />
+                              ) : (
+                                msg.message
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      )
+                    })
                   )}
                   <div ref={messagesEndRef} />
                 </div>

@@ -18,8 +18,11 @@ router.post('/files/:id/share', authenticate, deviceFingerprint, async (req, res
       return res.status(404).json({ error: 'File not found' })
     }
 
-    if (file.owner.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Access denied' })
+    // In development mode, allow all users to share files
+    if (process.env.NODE_ENV !== 'development') {
+      if (file.owner.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ error: 'Access denied' })
+      }
     }
 
     const { password } = req.body

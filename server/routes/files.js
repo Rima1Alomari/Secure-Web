@@ -42,6 +42,135 @@ const upload = multer({
 
 const router = express.Router()
 
+// Helper function to resolve emails/usernames to user IDs
+const resolveUserIdentifiers = async (identifiers) => {
+  if (!Array.isArray(identifiers) || identifiers.length === 0) {
+    return []
+  }
+
+  const mongoose = await import('mongoose')
+  const User = (await import('../models/User.js')).default
+  
+  if (mongoose.default.connection.readyState !== 1) {
+    console.warn('MongoDB not connected, cannot resolve user identifiers')
+    return []
+  }
+
+  const userIds = []
+  for (const identifier of identifiers) {
+    if (!identifier || typeof identifier !== 'string') continue
+    
+    const trimmed = identifier.trim()
+    if (!trimmed) continue
+
+    // Try to find by email first
+    let user = await User.findOne({ email: trimmed })
+    
+    // If not found by email, try to find by name (username)
+    if (!user) {
+      user = await User.findOne({ name: trimmed })
+    }
+    
+    // If still not found, try case-insensitive search
+    if (!user) {
+      user = await User.findOne({ 
+        $or: [
+          { email: { $regex: new RegExp(`^${trimmed}$`, 'i') } },
+          { name: { $regex: new RegExp(`^${trimmed}$`, 'i') } }
+        ]
+      })
+    }
+
+    if (user) {
+      userIds.push(user._id)
+    } else {
+      console.warn(`User not found for identifier: ${trimmed}`)
+    }
+  }
+
+  return userIds
+}
+
+// Helper function to check if user has access to file
+const checkFileAccess = (file, userId, action = 'view', userRoomId = null) => {
+  // In development mode, allow all access
+  if (process.env.NODE_ENV === 'development') {
+    return { allowed: true, reason: 'development_mode' }
+  }
+
+  const userIdStr = userId.toString()
+  const ownerIdStr = file.owner.toString()
+  
+  // Owner always has full access
+  if (ownerIdStr === userIdStr) {
+    return { allowed: true, reason: 'owner' }
+  }
+  
+  // Check permission mode
+  if (file.permissionMode === 'public') {
+    return { allowed: true, reason: 'public' }
+  }
+  
+  // Check room-based permissions first
+  if (file.permissionMode === 'rooms' || file.editorRooms || file.viewerRooms) {
+    // Check if user's room is in editor rooms
+    if (file.editorRooms && Array.isArray(file.editorRooms) && userRoomId) {
+      const isInEditorRoom = file.editorRooms.includes(userRoomId)
+      if (isInEditorRoom) {
+        return { allowed: true, reason: 'editor_room' }
+      }
+    }
+    
+    // Check if user's room is in viewer rooms
+    if (file.viewerRooms && Array.isArray(file.viewerRooms) && userRoomId) {
+      const isInViewerRoom = file.viewerRooms.includes(userRoomId)
+      if (isInViewerRoom) {
+        if (action === 'view' || action === 'download') {
+          return { allowed: true, reason: 'viewer_room' }
+        } else {
+          return { allowed: false, reason: 'viewer_room_cannot_edit' }
+        }
+      }
+    }
+  }
+  
+  // Legacy: Check if user is in editors list (can edit and view)
+  const isEditor = file.editors && file.editors.some(editor => {
+    const editorId = typeof editor === 'object' ? editor._id.toString() : editor.toString()
+    return editorId === userIdStr
+  })
+  
+  if (isEditor) {
+    return { allowed: true, reason: 'editor' }
+  }
+  
+  // Legacy: Check if user is in viewers list (can only view)
+  const isViewer = file.viewers && file.viewers.some(viewer => {
+    const viewerId = typeof viewer === 'object' ? viewer._id.toString() : viewer.toString()
+    return viewerId === userIdStr
+  })
+  
+  if (isViewer) {
+    if (action === 'view' || action === 'download') {
+      return { allowed: true, reason: 'viewer' }
+    } else {
+      return { allowed: false, reason: 'viewer_cannot_edit' }
+    }
+  }
+  
+  // Check permission mode
+  if (file.permissionMode === 'editors' && !isEditor) {
+    return { allowed: false, reason: 'editors_only' }
+  }
+  
+  if (file.permissionMode === 'viewers' && !isViewer) {
+    return { allowed: false, reason: 'viewers_only' }
+  }
+  
+  // Default: owner-only
+  return { allowed: false, reason: 'owner_only' }
+}
+
 router.get('/', authenticate, deviceFingerprint, async (req, res) => {
   try {
     // Check MongoDB connection
@@ -52,7 +181,11 @@ router.get('/', authenticate, deviceFingerprint, async (req, res) => {
     }
 
     // Temporarily return all files for testing (remove owner filter)
-    const files = await File.find({}).populate('owner', 'name email').sort({ createdAt: -1 })
+    const files = await File.find({})
+      .populate('owner', 'name email')
+      .populate('editors', 'name email')
+      .populate('viewers', 'name email')
+      .sort({ createdAt: -1 })
     
     // Log audit event (don't fail if this fails)
     try {
@@ -150,23 +283,26 @@ router.post('/direct-upload', authenticate, deviceFingerprint, upload.single('fi
       // Continue with upload even if scanning fails
     }
 
-    if (threats.some(t => t.severity === 'critical')) {
-      // Delete the file if it's a threat
-      fs.unlinkSync(localPath)
-      try {
-        await logAuditEvent('threat_detected', req.user._id?.toString() || 'unknown', 'Critical threat detected in file upload', {
-          fileName,
+    // In development mode, allow all files (skip threat detection blocking)
+    if (process.env.NODE_ENV !== 'development') {
+      if (threats.some(t => t.severity === 'critical')) {
+        // Delete the file if it's a threat
+        fs.unlinkSync(localPath)
+        try {
+          await logAuditEvent('threat_detected', req.user._id?.toString() || 'unknown', 'Critical threat detected in file upload', {
+            fileName,
+            threats,
+            ipAddress: req.ip
+          })
+        } catch (auditError) {
+          console.error('Audit log error (non-fatal):', auditError.message)
+        }
+        return res.status(403).json({ 
+          error: 'File rejected due to security threat',
           threats,
-          ipAddress: req.ip
+          dlpFindings
         })
-      } catch (auditError) {
-        console.error('Audit log error (non-fatal):', auditError.message)
       }
-      return res.status(403).json({ 
-        error: 'File rejected due to security threat',
-        threats,
-        dlpFindings
-      })
     }
 
     // Calculate file hash
@@ -226,6 +362,31 @@ router.post('/direct-upload', authenticate, deviceFingerprint, upload.single('fi
       }
     }
 
+    // Get room-based permissions from request body
+    let editorRooms = req.body.editorRooms || []
+    let viewerRooms = req.body.viewerRooms || []
+    const permissionMode = req.body.permissionMode || 'owner-only'
+    
+    // Parse if they're JSON strings (from FormData)
+    if (typeof editorRooms === 'string') {
+      try {
+        editorRooms = JSON.parse(editorRooms)
+      } catch {
+        editorRooms = []
+      }
+    }
+    if (typeof viewerRooms === 'string') {
+      try {
+        viewerRooms = JSON.parse(viewerRooms)
+      } catch {
+        viewerRooms = []
+      }
+    }
+    
+    // Ensure arrays
+    editorRooms = Array.isArray(editorRooms) ? editorRooms : []
+    viewerRooms = Array.isArray(viewerRooms) ? viewerRooms : []
+
     const file = new File({
       name: fileName,
       size: fileSize,
@@ -235,11 +396,16 @@ router.post('/direct-upload', authenticate, deviceFingerprint, upload.single('fi
       fileHash,
       threats: threats.length > 0 ? threats : undefined,
       dlpFindings: dlpFindings.length > 0 ? dlpFindings : undefined,
-      localPath: localPath // Store local path for direct uploads
+      localPath: localPath, // Store local path for direct uploads
+      editorRooms: editorRooms,
+      viewerRooms: viewerRooms,
+      permissionMode: permissionMode
     })
 
     await file.save()
     await file.populate('owner', 'name email')
+    await file.populate('editors', 'name email')
+    await file.populate('viewers', 'name email')
 
     try {
       await logAuditEvent('file_upload', req.user._id?.toString() || ownerId?.toString() || 'unknown', `File uploaded: ${fileName}`, {
@@ -286,7 +452,7 @@ router.post('/direct-upload', authenticate, deviceFingerprint, upload.single('fi
 
 router.post('/complete-upload', authenticate, deviceFingerprint, async (req, res) => {
   try {
-    const { fileName, fileType, fileSize, s3Key, fileHash } = req.body
+    const { fileName, fileType, fileSize, s3Key, fileHash, editorRooms = [], viewerRooms = [], permissionMode = 'owner-only' } = req.body
 
     if (!fileName || !fileType || !fileSize || !s3Key) {
       return res.status(400).json({ error: 'All fields are required' })
@@ -297,18 +463,25 @@ router.post('/complete-upload', authenticate, deviceFingerprint, async (req, res
     const threats = await scanFile(fileBuffer, fileName, fileType)
     const dlpFindings = await scanFileContent(fileBuffer, fileName)
 
-    if (threats.some(t => t.severity === 'critical')) {
-      await logAuditEvent('threat_detected', req.user._id.toString(), 'Critical threat detected in file upload', {
-        fileName,
-        threats,
-        ipAddress: req.ip
-      })
-      return res.status(403).json({ 
-        error: 'File rejected due to security threat',
-        threats,
-        dlpFindings
-      })
+    // In development mode, allow all files (skip threat detection blocking)
+    if (process.env.NODE_ENV !== 'development') {
+      if (threats.some(t => t.severity === 'critical')) {
+        await logAuditEvent('threat_detected', req.user._id.toString(), 'Critical threat detected in file upload', {
+          fileName,
+          threats,
+          ipAddress: req.ip
+        })
+        return res.status(403).json({ 
+          error: 'File rejected due to security threat',
+          threats,
+          dlpFindings
+        })
+      }
     }
+
+    // Ensure arrays
+    const editorRoomIds = Array.isArray(editorRooms) ? editorRooms : []
+    const viewerRoomIds = Array.isArray(viewerRooms) ? viewerRooms : []
 
     const file = new File({
       name: fileName,
@@ -318,13 +491,18 @@ router.post('/complete-upload', authenticate, deviceFingerprint, async (req, res
       owner: req.user._id,
       fileHash,
       threats: threats.length > 0 ? threats : undefined,
-      dlpFindings: dlpFindings.length > 0 ? dlpFindings : undefined
+      dlpFindings: dlpFindings.length > 0 ? dlpFindings : undefined,
+      editorRooms: editorRoomIds,
+      viewerRooms: viewerRoomIds,
+      permissionMode: permissionMode
     })
 
     await file.save()
 
-    // Populate owner before returning
+    // Populate owner, editors, and viewers before returning
     await file.populate('owner', 'name email')
+    await file.populate('editors', 'name email')
+    await file.populate('viewers', 'name email')
 
     await logAuditEvent('file_upload', req.user._id.toString(), `File uploaded: ${fileName}`, {
       fileId: file._id.toString(),
@@ -360,16 +538,33 @@ router.get('/:id/download-url', authenticate, async (req, res) => {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
     }
 
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
+    }
+
     const file = await File.findById(req.params.id)
+      .populate('editors', 'name email')
+      .populate('viewers', 'name email')
 
     if (!file) {
       return res.status(404).json({ error: 'File not found' })
     }
 
-    // Temporarily disabled owner check for testing
-    // if (file.owner.toString() !== req.user._id.toString()) {
-    //   return res.status(403).json({ error: 'Access denied' })
-    // }
+    // Check file access permissions
+    const access = checkFileAccess(file, req.user._id, 'download')
+    if (!access.allowed) {
+      try {
+        await logAuditEvent('access_denied', req.user._id.toString(), `Attempted to download file without permission: ${file.name}`, {
+          fileId: file._id.toString(),
+          reason: access.reason,
+          ipAddress: req.ip
+        })
+      } catch (auditError) {
+        console.error('Audit log error (non-fatal):', auditError.message)
+      }
+      return res.status(403).json({ error: 'Access denied', reason: access.reason })
+    }
 
     // Check if file is stored locally (direct upload)
     if (file.localPath && fs.existsSync(file.localPath)) {
@@ -410,6 +605,11 @@ router.delete('/:id', authenticate, deviceFingerprint, async (req, res) => {
     const mongoose = await import('mongoose')
     if (mongoose.default.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
     }
 
     const file = await File.findById(req.params.id)
@@ -484,6 +684,12 @@ router.delete('/:id', authenticate, deviceFingerprint, async (req, res) => {
 
 router.get('/:id/editor-config', authenticate, async (req, res) => {
   try {
+    // Validate ObjectId format
+    const mongoose = await import('mongoose')
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
+    }
+
     const file = await File.findById(req.params.id)
 
     if (!file) {
@@ -528,6 +734,11 @@ router.patch('/:id', authenticate, deviceFingerprint, async (req, res) => {
     const mongoose = await import('mongoose')
     if (mongoose.default.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not available. Please try again later.' })
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.default.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid file ID format' })
     }
 
     const file = await File.findById(req.params.id)

@@ -33,13 +33,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Error loading user from localStorage:', error)
     }
-    // Default user for testing
-    return {
-      id: 'default-user',
-      name: 'Demo User',
-      email: 'user@example.com',
-      role: DEFAULT_ROLE,
-    }
+    // Return null if no user stored (will require login)
+    return null
   })
 
   const setUser = (newUser: User | null) => {

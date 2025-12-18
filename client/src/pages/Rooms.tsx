@@ -6,13 +6,15 @@ import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
 import { Room, ChatMessage, AdminUserMock } from '../types/models'
 import { useUser } from '../contexts/UserContext'
+import { auditHelpers } from '../utils/audit'
 
 const Rooms = () => {
   const navigate = useNavigate()
   const { role } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [newRoom, setNewRoom] = useState({ name: '', description: '', isPrivate: false })
+  const [newRoom, setNewRoom] = useState({ name: '', description: '' })
+  const [roomClassification, setRoomClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
   const [refreshKey, setRefreshKey] = useState(0)
   const [selectedRoomMenu, setSelectedRoomMenu] = useState<string | null>(null)
   const [showInfoModal, setShowInfoModal] = useState(false)
@@ -91,20 +93,27 @@ const Rooms = () => {
       id: uuid(),
       name: newRoom.name,
       description: newRoom.description,
-      isPrivate: newRoom.isPrivate,
+      isPrivate: false,
       members: 1,
       maxMembers: 50,
       createdAt: nowISO(),
       updatedAt: nowISO(),
-      roomLevel: 'Normal',
+      roomLevel: roomClassification,
+      classification: roomClassification,
       memberIds: [],
     }
 
     const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
     setJSON(ROOMS_KEY, [...allRooms, room])
-    setNewRoom({ name: '', description: '', isPrivate: false })
+    
+    // Log audit event
+    auditHelpers.logRoomCreate(room.name, room.id)
+    
+    setNewRoom({ name: '', description: '' })
+    setRoomClassification('Normal')
     setShowCreateModal(false)
     setRefreshKey(prev => prev + 1)
+    setToast({ message: `Room "${room.name}" created successfully`, type: 'success' })
   }
 
   const handleRoomClick = (roomId: string, event?: React.MouseEvent) => {
@@ -283,6 +292,19 @@ const Rooms = () => {
     return date.toLocaleDateString()
   }
 
+  const getClassificationColor = (level?: 'Normal' | 'Confidential' | 'Restricted') => {
+    switch (level) {
+      case 'Normal':
+        return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700'
+      case 'Confidential':
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700'
+      case 'Restricted':
+        return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700'
+      default:
+        return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700'
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="page-content">
@@ -344,10 +366,15 @@ const Rooms = () => {
                   className="w-full text-left"
                 >
                   <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
                       <h3 className="text-xl font-bold text-gray-900 dark:text-white truncate">
                         {room.name}
                       </h3>
+                      {(room.classification || room.roomLevel) && (
+                        <span className={`flex-shrink-0 px-2 py-0.5 text-xs font-semibold rounded-full border ${getClassificationColor(room.classification || room.roomLevel)}`}>
+                          {room.classification || room.roomLevel}
+                        </span>
+                      )}
                       {room.unreadCount && room.unreadCount > 0 && (
                         <span className="flex-shrink-0 px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full">
                           {room.unreadCount}
@@ -385,6 +412,16 @@ const Rooms = () => {
                       >
                         <FaInfo className="text-blue-600 dark:text-blue-400" />
                         <span className="text-gray-900 dark:text-white">Info</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowAddMemberModal(true)
+                          setSelectedRoomMenu(null)
+                        }}
+                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <FaUserPlus className="text-green-600 dark:text-green-400" />
+                        <span className="text-gray-900 dark:text-white">Add Member</span>
                       </button>
                       {role === 'admin' && (
                         <>
@@ -576,7 +613,7 @@ const Rooms = () => {
             setShowAddMemberModal(false)
             setAddMemberSearchQuery('')
           }}
-          title="Add Member"
+          title={selectedRoom ? `Add Member to ${selectedRoom.name}` : "Add Member"}
         >
           <div className="space-y-4">
             <div className="relative">
@@ -692,7 +729,8 @@ const Rooms = () => {
           isOpen={showCreateModal}
           onClose={() => {
             setShowCreateModal(false)
-            setNewRoom({ name: '', description: '', isPrivate: false })
+            setNewRoom({ name: '', description: '' })
+            setRoomClassification('Normal')
           }}
           title="Create New Room"
         >
@@ -722,23 +760,29 @@ const Rooms = () => {
                 rows={3}
               />
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="private"
-                checked={newRoom.isPrivate}
-                onChange={(e) => setNewRoom({ ...newRoom, isPrivate: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-              />
-              <label htmlFor="private" className="text-sm text-gray-700 dark:text-gray-300">
-                Private Room
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Data Classification Level *
               </label>
+              <select
+                value={roomClassification}
+                onChange={(e) => setRoomClassification(e.target.value as 'Normal' | 'Confidential' | 'Restricted')}
+                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              >
+                <option value="Normal">Normal - Standard business data, accessible to all authorized users</option>
+                <option value="Confidential">Confidential - Sensitive data, restricted access, requires admin/security roles</option>
+                <option value="Restricted">Restricted - Highly sensitive data, security role only with approval</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Select the appropriate classification level for this room's data
+              </p>
             </div>
             <div className="flex gap-3 pt-4">
               <button
                 onClick={() => {
                   setShowCreateModal(false)
-                  setNewRoom({ name: '', description: '', isPrivate: false })
+                  setNewRoom({ name: '', description: '' })
+                  setRoomClassification('Normal')
                 }}
                 className="btn-secondary flex-1"
               >

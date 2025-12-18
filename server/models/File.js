@@ -37,7 +37,31 @@ const fileSchema = new mongoose.Schema({
     category: String,
     severity: String,
     message: String
-  }]
+  }],
+  // File access permissions - Room-based
+  editorRooms: [{
+    type: String, // Room IDs
+    required: false
+  }],
+  viewerRooms: [{
+    type: String, // Room IDs
+    required: false
+  }],
+  // Legacy support for user-based permissions
+  editors: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  viewers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  // Permission mode: 'owner-only', 'rooms', 'public'
+  permissionMode: {
+    type: String,
+    enum: ['owner-only', 'rooms', 'public'],
+    default: 'owner-only'
+  }
 }, {
   timestamps: true
 })

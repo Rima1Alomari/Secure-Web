@@ -15,6 +15,7 @@ const TrashBin = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [itemToDelete, setItemToDelete] = useState<TrashItem | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  
 
   // Load trash items from localStorage
   useEffect(() => {
@@ -106,19 +107,22 @@ const TrashBin = () => {
     }
   }
 
+
   return (
     <div className="page-content">
       <div className="page-container">
         <div className="flex justify-between items-center page-header">
           <h1 className="page-title">Trash</h1>
-          {trashItems.length > 0 && (
-            <button
-              onClick={handleEmptyTrash}
-              className="btn-danger"
-            >
-              <FaTrash /> Empty Trash
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {trashItems.length > 0 && (
+              <button
+                onClick={handleEmptyTrash}
+                className="btn-danger"
+              >
+                <FaTrash /> Empty Trash
+              </button>
+            )}
+          </div>
         </div>
 
         {isLoading ? (
@@ -228,6 +232,7 @@ const TrashBin = () => {
           />
         )}
       </div>
+
     </div>
   )
 }

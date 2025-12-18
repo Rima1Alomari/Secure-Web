@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FaTimes, FaVideo, FaFile, FaCalendarAlt, FaComments, FaSearch } from 'react-icons/fa'
+import { getJSON } from '../data/storage'
+import { ROOMS_KEY, FILES_KEY, EVENTS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
+import { Room, FileItem, EventItem, ChatMessage } from '../types/models'
 
 interface SearchResult {
   id: string
@@ -16,33 +19,6 @@ interface SearchResultsModalProps {
   searchQuery: string
 }
 
-// Mock search results
-const mockResults: SearchResult[] = [
-  // Rooms
-  { id: '1', title: 'Team Standup Meeting', type: 'room', path: '/rooms', metadata: 'Daily sync • 5 members' },
-  { id: '2', title: 'Project Planning Room', type: 'room', path: '/rooms', metadata: 'Active now • 12 members' },
-  { id: '3', title: 'Client Presentation', type: 'room', path: '/rooms', metadata: 'Scheduled • 8 members' },
-  { id: '4', title: 'Development Team', type: 'room', path: '/rooms', metadata: 'Active now • 15 members' },
-  
-  // Files
-  { id: '5', title: 'Q4_Report_2024.pdf', type: 'file', path: '/files', metadata: 'PDF • 2.3 MB • Dec 10, 2024' },
-  { id: '6', title: 'Project_Proposal.docx', type: 'file', path: '/files', metadata: 'Word • 456 KB • Dec 8, 2024' },
-  { id: '7', title: 'Meeting_Notes_2024.xlsx', type: 'file', path: '/files', metadata: 'Excel • 1.1 MB • Dec 5, 2024' },
-  { id: '8', title: 'Design_Mockups.zip', type: 'file', path: '/files', metadata: 'Archive • 15.2 MB • Dec 1, 2024' },
-  { id: '9', title: 'Budget_2024.xlsx', type: 'file', path: '/files', metadata: 'Excel • 256 KB • Nov 28, 2024' },
-  
-  // Events (Calendar)
-  { id: '10', title: 'Quarterly Review Meeting', type: 'event', path: '/calendar', metadata: 'Dec 15, 2024 • 2:00 PM' },
-  { id: '11', title: 'Team Building Event', type: 'event', path: '/calendar', metadata: 'Dec 20, 2024 • 10:00 AM' },
-  { id: '12', title: 'Product Launch', type: 'event', path: '/calendar', metadata: 'Jan 5, 2025 • 9:00 AM' },
-  { id: '13', title: 'Sprint Planning', type: 'event', path: '/calendar', metadata: 'Dec 18, 2024 • 3:00 PM' },
-  
-  // Messages (Chat)
-  { id: '14', title: 'Discussion about new features', type: 'message', path: '/chat', metadata: 'From: John Doe • 2 hours ago' },
-  { id: '15', title: 'Security update notification', type: 'message', path: '/chat', metadata: 'From: Admin • Yesterday' },
-  { id: '16', title: 'Project status update', type: 'message', path: '/chat', metadata: 'From: Sarah • 3 days ago' },
-]
-
 const typeConfig = {
   room: { icon: FaVideo, label: 'Rooms', color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-50 dark:bg-blue-900/20' },
   file: { icon: FaFile, label: 'Files', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-50 dark:bg-green-900/20' },
@@ -54,18 +30,66 @@ export default function SearchResultsModal({ isOpen, onClose, searchQuery }: Sea
   const navigate = useNavigate()
   const [filteredResults, setFilteredResults] = useState<SearchResult[]>([])
 
+  // Get all searchable items from storage
+  const allSearchResults = useMemo(() => {
+    const rooms = getJSON<Room[]>(ROOMS_KEY, []) || []
+    const files = getJSON<FileItem[]>(FILES_KEY, []) || []
+    const events = getJSON<EventItem[]>(EVENTS_KEY, []) || []
+    const messages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+
+    const results: SearchResult[] = [
+      // Rooms
+      ...rooms.map(room => ({
+        id: room.id,
+        title: room.name,
+        type: 'room' as const,
+        path: `/rooms/${room.id}`,
+        metadata: `${room.description || 'Room'} • ${room.members || 0} members`
+      })),
+      // Files
+      ...files.filter(f => !f.isTrashed).map(file => ({
+        id: file.id,
+        title: file.name,
+        type: 'file' as const,
+        path: '/files',
+        metadata: `${file.type || 'File'} • ${(file.size / 1024).toFixed(1)} KB • ${new Date(file.uploadedAt).toLocaleDateString()}`
+      })),
+      // Events
+      ...events.map(event => {
+        const eventDate = typeof event.date === 'string' ? new Date(event.date) : event.date
+        return {
+          id: event.id,
+          title: event.title,
+          type: 'event' as const,
+          path: '/calendar',
+          metadata: `${eventDate.toLocaleDateString()} • ${event.time || ''}`
+        }
+      }),
+      // Messages (recent messages only)
+      ...messages.slice(-50).map(msg => ({
+        id: msg.id,
+        title: msg.message.substring(0, 50) + (msg.message.length > 50 ? '...' : ''),
+        type: 'message' as const,
+        path: msg.roomId ? `/rooms/${msg.roomId}` : '/chat',
+        metadata: `From: ${msg.sender || 'User'} • ${new Date(msg.timestamp).toLocaleDateString()}`
+      }))
+    ]
+
+    return results
+  }, [])
+
   useEffect(() => {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
-      const filtered = mockResults.filter(result =>
+      const filtered = allSearchResults.filter(result =>
         result.title.toLowerCase().includes(query) ||
         result.metadata?.toLowerCase().includes(query)
       )
       setFilteredResults(filtered)
     } else {
-      setFilteredResults(mockResults)
+      setFilteredResults(allSearchResults.slice(0, 20)) // Show first 20 when no query
     }
-  }, [searchQuery])
+  }, [searchQuery, allSearchResults])
 
   // Group results by type
   const groupedResults = filteredResults.reduce((acc, result) => {

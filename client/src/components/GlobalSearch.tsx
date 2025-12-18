@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FaSearch, FaVideo, FaFile, FaCalendarAlt, FaComments, FaTimes } from 'react-icons/fa'
+import { FaSearch, FaVideo, FaFile, FaCalendarAlt, FaComments, FaTimes, FaRobot, FaSpinner } from 'react-icons/fa'
 import SearchResultsModal from './SearchResultsModal'
+import { getJSON } from '../data/storage'
+import { ROOMS_KEY, FILES_KEY, EVENTS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
 
 interface SearchResult {
   id: string
@@ -10,30 +12,6 @@ interface SearchResult {
   path: string
   metadata?: string
 }
-
-// Mock search results
-const mockResults: SearchResult[] = [
-  // Rooms
-  { id: '1', title: 'Team Standup Meeting', type: 'room', path: '/rooms', metadata: 'Daily sync' },
-  { id: '2', title: 'Project Planning Room', type: 'room', path: '/rooms', metadata: 'Active now' },
-  { id: '3', title: 'Client Presentation', type: 'room', path: '/rooms', metadata: 'Scheduled' },
-  
-  // Files
-  { id: '4', title: 'Q4_Report_2024.pdf', type: 'file', path: '/files', metadata: 'PDF • 2.3 MB' },
-  { id: '5', title: 'Project_Proposal.docx', type: 'file', path: '/files', metadata: 'Word • 456 KB' },
-  { id: '6', title: 'Meeting_Notes_2024.xlsx', type: 'file', path: '/files', metadata: 'Excel • 1.1 MB' },
-  { id: '7', title: 'Design_Mockups.zip', type: 'file', path: '/files', metadata: 'Archive • 15.2 MB' },
-  
-  // Events (Calendar)
-  { id: '8', title: 'Quarterly Review Meeting', type: 'event', path: '/calendar', metadata: 'Dec 15, 2024 • 2:00 PM' },
-  { id: '9', title: 'Team Building Event', type: 'event', path: '/calendar', metadata: 'Dec 20, 2024 • 10:00 AM' },
-  { id: '10', title: 'Product Launch', type: 'event', path: '/calendar', metadata: 'Jan 5, 2025 • 9:00 AM' },
-  
-  // Messages (Chat)
-  { id: '11', title: 'Discussion about new features', type: 'message', path: '/chat', metadata: 'From: John Doe • 2 hours ago' },
-  { id: '12', title: 'Security update notification', type: 'message', path: '/chat', metadata: 'From: Admin • Yesterday' },
-  { id: '13', title: 'Project status update', type: 'message', path: '/chat', metadata: 'From: Sarah • 3 days ago' },
-]
 
 const typeConfig = {
   room: { icon: FaVideo, label: 'Rooms', color: 'text-blue-600 dark:text-blue-400' },
@@ -47,21 +25,124 @@ export default function GlobalSearch() {
   const [showModal, setShowModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [filteredResults, setFilteredResults] = useState<SearchResult[]>([])
+  const [isAISearch, setIsAISearch] = useState(false)
+  const [aiSearching, setAiSearching] = useState(false)
   const navigate = useNavigate()
   const searchRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Get all searchable items from storage
+  const getAllSearchableItems = (): SearchResult[] => {
+    const rooms = getJSON<any[]>(ROOMS_KEY, []) || []
+    const files = getJSON<any[]>(FILES_KEY, []) || []
+    const events = getJSON<any[]>(EVENTS_KEY, []) || []
+    const messages = getJSON<any[]>(CHAT_MESSAGES_KEY, []) || []
+
+    const results: SearchResult[] = [
+      ...rooms.map(room => ({
+        id: room.id,
+        title: room.name,
+        type: 'room' as const,
+        path: `/rooms/${room.id}`,
+        metadata: room.description || 'Room'
+      })),
+      ...files.map(file => ({
+        id: file.id,
+        title: file.name,
+        type: 'file' as const,
+        path: '/files',
+        metadata: `${file.type || 'File'} • ${(file.size / 1024).toFixed(1)} KB`
+      })),
+      ...events.map(event => ({
+        id: event.id,
+        title: event.title,
+        type: 'event' as const,
+        path: '/calendar',
+        metadata: `${event.date} • ${event.time || ''}`
+      })),
+      ...messages.slice(0, 20).map(msg => ({
+        id: msg.id,
+        title: msg.message?.substring(0, 50) || 'Message',
+        type: 'message' as const,
+        path: `/rooms/${msg.roomId}`,
+        metadata: `From: ${msg.sender || 'User'}`
+      }))
+    ]
+
+    return results
+  }
+
+  // AI-powered smart search
+  const performAISearch = async (query: string) => {
+    if (!query.trim() || query.length < 3) return
+
+    setAiSearching(true)
+    try {
+      const allItems = getAllSearchableItems()
+      const API_URL = (import.meta as any).env.VITE_API_URL || '/api'
+      const token = localStorage.getItem('token') || 'mock-token-for-testing'
+
+      const response = await fetch(`${API_URL}/ai/smart-search`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query,
+          items: allItems.map(item => ({
+            title: item.title,
+            metadata: item.metadata,
+            type: item.type
+          }))
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        // Map back to full SearchResult objects
+        const matchedItems = allItems.filter(item =>
+          data.items?.some((matched: any) => matched.title === item.title)
+        )
+        setFilteredResults(matchedItems.length > 0 ? matchedItems : allItems.slice(0, 10))
+        setIsAISearch(true)
+      } else {
+        // Fallback to regular search
+        performRegularSearch(query)
+      }
+    } catch (error) {
+      console.error('AI search error:', error)
+      // Fallback to regular search
+      performRegularSearch(query)
+    } finally {
+      setAiSearching(false)
+    }
+  }
+
+  // Regular keyword search
+  const performRegularSearch = (query: string) => {
+    const allItems = getAllSearchableItems()
+    const queryLower = query.toLowerCase()
+    const filtered = allItems.filter(result =>
+      result.title.toLowerCase().includes(queryLower) ||
+      result.metadata?.toLowerCase().includes(queryLower)
+    )
+    setFilteredResults(filtered)
+    setIsAISearch(false)
+  }
+
   // Filter results based on search query
   useEffect(() => {
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      const filtered = mockResults.filter(result =>
-        result.title.toLowerCase().includes(query) ||
-        result.metadata?.toLowerCase().includes(query)
-      )
-      setFilteredResults(filtered)
+      // Use AI search for longer, more natural language queries
+      if (searchQuery.length > 10 && searchQuery.split(' ').length > 2) {
+        performAISearch(searchQuery)
+      } else {
+        performRegularSearch(searchQuery)
+      }
     } else {
-      setFilteredResults(mockResults)
+      setFilteredResults([])
+      setIsAISearch(false)
     }
   }, [searchQuery])
 
@@ -128,9 +209,19 @@ export default function GlobalSearch() {
               setIsOpen(true)
             }
           }}
-          placeholder="Search rooms, files, events..."
+          placeholder="Search rooms, files, events... (AI-powered)"
           className="block w-full pl-9 sm:pl-10 pr-9 sm:pr-10 py-2 sm:py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:focus:ring-blue-400 dark:focus:border-blue-400 transition-all duration-200 text-xs sm:text-sm"
         />
+        {aiSearching && (
+          <div className="absolute inset-y-0 right-0 pr-10 flex items-center">
+            <FaSpinner className="h-4 w-4 text-blue-600 dark:text-blue-400 animate-spin" />
+          </div>
+        )}
+        {isAISearch && !aiSearching && (
+          <div className="absolute inset-y-0 right-0 pr-10 flex items-center">
+            <FaRobot className="h-4 w-4 text-green-600 dark:text-green-400" title="AI-powered search" />
+          </div>
+        )}
         {searchQuery && (
           <button
             onClick={() => {
@@ -147,6 +238,14 @@ export default function GlobalSearch() {
       {/* Dropdown Results */}
       {isOpen && filteredResults.length > 0 && (
         <div className="absolute z-50 mt-2 w-full sm:w-[calc(100vw-2rem)] lg:w-full max-w-2xl bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 max-h-96 overflow-y-auto animate-fade-in">
+          {isAISearch && (
+            <div className="px-3 py-2 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 border-b border-blue-200 dark:border-blue-800 flex items-center gap-2">
+              <FaRobot className="text-green-600 dark:text-green-400 text-sm" />
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                AI-powered search results
+              </span>
+            </div>
+          )}
           <div className="p-2">
             {Object.entries(groupedResults).map(([type, results]) => {
               const config = typeConfig[type as keyof typeof typeConfig]

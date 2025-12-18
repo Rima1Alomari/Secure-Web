@@ -2,8 +2,21 @@
 // Re-enable when ready by uncommenting the real implementation
 
 export const authenticate = (req, res, next) => {
-  // Temporarily allow all requests for testing
-  req.user = { _id: 'mock-user-id' }
+  // In development mode, use a mock user
+  if (process.env.NODE_ENV === 'development') {
+    // Use a valid MongoDB ObjectId format for development
+    req.user = { 
+      _id: '507f1f77bcf86cd799439011', // Valid ObjectId format
+      toString: () => '507f1f77bcf86cd799439011'
+    }
+    return next()
+  }
+  
+  // Temporarily allow all requests for testing (fallback)
+  req.user = { 
+    _id: '507f1f77bcf86cd799439011',
+    toString: () => '507f1f77bcf86cd799439011'
+  }
   next()
   
   // Real implementation (commented for now):
