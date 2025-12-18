@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaChevronDown, FaUsers, FaUserFriends, FaSearch, FaLink, FaCheck, FaTimesCircle } from 'react-icons/fa'
+import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaChevronDown, FaUsers, FaUserFriends, FaSearch, FaLink, FaCheck, FaTimesCircle, FaCalendarCheck } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { EVENTS_KEY, ADMIN_USERS_KEY, ROOMS_KEY } from '../data/keys'
@@ -42,6 +42,8 @@ const Calendar = () => {
   const [invitedUsers, setInvitedUsers] = useState<string[]>([])
   const [invitedGroup, setInvitedGroup] = useState<string>('')
   const newDropdownRef = useRef<HTMLDivElement>(null)
+  const [bestTimeSuggestions, setBestTimeSuggestions] = useState<Array<{ date: string; time: string; score: number }>>([])
+  const [bestTimeLoading, setBestTimeLoading] = useState(false)
   
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -186,6 +188,29 @@ const Calendar = () => {
       return
     }
 
+    // Validate date is not in the past
+    const selectedDate = new Date(newEvent.date)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    if (selectedDate < today) {
+      setToast({ message: 'Cannot create events in the past', type: 'error' })
+      return
+    }
+
+    // Validate time is not in the past if date is today
+    if (selectedDate.toDateString() === today.toDateString()) {
+      const now = new Date()
+      const [fromHour, fromMinute] = newEvent.from.split(':').map(Number)
+      const eventStartTime = new Date(now)
+      eventStartTime.setHours(fromHour, fromMinute, 0, 0)
+      
+      if (eventStartTime < now) {
+        setToast({ message: 'Cannot create events with past times', type: 'error' })
+        return
+      }
+    }
+
     // Auto-generate meeting link if online and not provided
     let meetingLink = newEvent.meetingLink
     if (newEvent.isOnline && !meetingLink) {
@@ -312,6 +337,33 @@ const Calendar = () => {
       return
     }
 
+    // Validate date is not in the past (unless editing existing event that's already in the past)
+    const selectedDate = new Date(newEvent.date)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const originalDate = selectedEvent.date instanceof Date ? selectedEvent.date : new Date(selectedEvent.date)
+    originalDate.setHours(0, 0, 0, 0)
+    
+    // Only validate if the new date is in the past AND the original date was not in the past
+    if (selectedDate < today && originalDate >= today) {
+      setToast({ message: 'Cannot move events to past dates', type: 'error' })
+      return
+    }
+
+    // Validate time is not in the past if date is today
+    if (selectedDate.toDateString() === today.toDateString()) {
+      const now = new Date()
+      const [fromHour, fromMinute] = newEvent.from.split(':').map(Number)
+      const eventStartTime = new Date(now)
+      eventStartTime.setHours(fromHour, fromMinute, 0, 0)
+      
+      // Only validate if original event was not in the past
+      if (eventStartTime < now && originalDate >= today) {
+        setToast({ message: 'Cannot set event time in the past', type: 'error' })
+        return
+      }
+    }
+
     // Auto-generate meeting link if online and not provided
     let meetingLink = newEvent.meetingLink
     if (newEvent.isOnline && !meetingLink) {
@@ -397,6 +449,141 @@ const Calendar = () => {
       trackMeetingOpened(event.id, event.title, user.id)
     }
   }
+
+
+  // Calculate best time suggestions based on existing meetings and working hours
+  const calculateBestTimeSuggestions = () => {
+    if (!user?.id) return
+    
+    setBestTimeLoading(true)
+    
+    try {
+      const allEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
+      const now = new Date()
+      const workingHours = { start: 9, end: 17 } // 9 AM to 5 PM
+      const meetingDuration = 60 // Default 60 minutes
+      const suggestions: Array<{ date: string; time: string; score: number }> = []
+      
+      // Get current time components for comparison
+      const currentHour = now.getHours()
+      const currentMinute = now.getMinutes()
+      const currentTimeMinutes = currentHour * 60 + currentMinute
+      
+      // Get user's existing meetings for the next 7 days
+      const userMeetings = allEvents.filter(e => {
+        if (e.creatorId !== user.id && !(e.sharedWith && e.sharedWith.includes(user.id))) return false
+        const eventDate = e.date instanceof Date ? e.date : new Date(e.date)
+        return eventDate >= now && eventDate <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+      })
+      
+      // Generate suggestions for next 7 days (start from today, but skip past times)
+      // IMPORTANT: Only suggest future dates, never past dates
+      const today = new Date(now)
+      today.setHours(0, 0, 0, 0)
+      
+      for (let day = 0; day < 7; day++) {
+        const checkDate = new Date(now)
+        checkDate.setDate(now.getDate() + day)
+        checkDate.setHours(0, 0, 0, 0)
+        
+        // Skip if date is in the past (shouldn't happen, but safety check)
+        if (checkDate < today) {
+          continue
+        }
+        
+        const isToday = checkDate.toDateString() === today.toDateString()
+        
+        // Get meetings for this day
+        const dayMeetings = userMeetings.filter(e => {
+          const eventDate = e.date instanceof Date ? e.date : new Date(e.date)
+          return eventDate.toDateString() === checkDate.toDateString()
+        }).map(e => {
+          const timeStr = e.time || '09:00 - 10:00'
+          const [from, to] = timeStr.split(' - ')
+          return {
+            from: from || '09:00',
+            to: to || '10:00'
+          }
+        })
+        
+        // Find free time slots
+        for (let hour = workingHours.start; hour < workingHours.end; hour++) {
+          for (let minute = 0; minute < 60; minute += 30) {
+            const slotStart = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+            const slotEndHour = Math.floor((hour * 60 + minute + meetingDuration) / 60)
+            const slotEndMinute = (hour * 60 + minute + meetingDuration) % 60
+            const slotEnd = `${slotEndHour.toString().padStart(2, '0')}:${slotEndMinute.toString().padStart(2, '0')}`
+            
+            // Skip past time slots for today
+            if (isToday) {
+              const slotStartMinutes = hour * 60 + minute
+              // Add 15 minutes buffer to current time
+              if (slotStartMinutes <= currentTimeMinutes + 15) {
+                continue // Skip this slot, it's in the past
+              }
+            }
+            
+            // Check if slot conflicts with existing meetings
+            const hasConflict = dayMeetings.some(meeting => {
+              const meetingStart = meeting.from
+              const meetingEnd = meeting.to
+              return (slotStart < meetingEnd && slotEnd > meetingStart)
+            })
+            
+            if (!hasConflict && slotEndHour <= workingHours.end) {
+              // Calculate score (prefer morning slots, avoid late afternoon)
+              let score = 100
+              if (hour < 11) score += 20 // Morning preference
+              else if (hour >= 14 && hour < 16) score += 10 // Afternoon
+              else if (hour >= 16) score -= 10 // Late afternoon penalty
+              
+              // Prefer earlier dates
+              if (day === 0) score += 10 // Today gets bonus if time is valid
+              else if (day === 1) score += 5 // Tomorrow gets small bonus
+              
+              suggestions.push({
+                date: checkDate.toISOString().split('T')[0],
+                time: `${slotStart} - ${slotEnd}`,
+                score: score
+              })
+            }
+          }
+        }
+      }
+      
+      // Filter out any past dates (safety check)
+      // Reuse the 'today' variable already declared above
+      const validSuggestions = suggestions.filter(suggestion => {
+        const suggestionDate = new Date(suggestion.date)
+        suggestionDate.setHours(0, 0, 0, 0)
+        return suggestionDate >= today
+      })
+      
+      // Sort by score and date, take top 5
+      const sortedSuggestions = validSuggestions
+        .sort((a, b) => {
+          if (a.date !== b.date) {
+            return a.date.localeCompare(b.date)
+          }
+          return b.score - a.score
+        })
+        .slice(0, 5)
+      
+      setBestTimeSuggestions(sortedSuggestions)
+    } catch (error) {
+      console.error('Error calculating best time suggestions:', error)
+      setBestTimeSuggestions([])
+    } finally {
+      setBestTimeLoading(false)
+    }
+  }
+
+  // Auto-calculate suggestions when modal opens for new meetings
+  useEffect(() => {
+    if (showCreateModal && eventType === 'meeting' && !selectedEvent && user?.id) {
+      calculateBestTimeSuggestions()
+    }
+  }, [showCreateModal, eventType, selectedEvent, user?.id])
 
   const handleAcceptInvite = () => {
     if (!selectedEvent || !user?.id) return
@@ -729,21 +916,29 @@ const Calendar = () => {
                               )}
                               {date && dayEvents.length > 0 && (
                                 <div className="space-y-0.5">
-                                  {dayEvents.slice(0, 2).map(event => (
-                                    <button
-                                      key={event.id}
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        handleEventClick(event)
-                                      }}
-                                      className={`w-full text-[10px] px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded truncate hover:bg-blue-200 dark:hover:bg-blue-900/50 ${
-                                        isOutside ? 'opacity-60' : ''
-                                      }`}
-                                      title={event.title}
-                                    >
-                                      {event.title}
-                                    </button>
-                                  ))}
+                                  {dayEvents.slice(0, 2).map(event => {
+                                    const eventColor = (event as any).color || '#3B82F6'
+                                    return (
+                                      <button
+                                        key={event.id}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleEventClick(event)
+                                        }}
+                                        className={`w-full text-[10px] px-1 py-0.5 rounded truncate ${
+                                          isOutside ? 'opacity-60' : ''
+                                        }`}
+                                        style={{
+                                          backgroundColor: `${eventColor}20`,
+                                          color: eventColor,
+                                          borderLeft: `2px solid ${eventColor}`
+                                        }}
+                                        title={event.title}
+                                      >
+                                        {event.title}
+                                      </button>
+                                    )
+                                  })}
                                   {dayEvents.length > 2 && (
                                     <div className={`text-[10px] px-1 ${isOutside ? 'text-gray-400 dark:text-gray-600' : 'text-gray-500 dark:text-gray-500'}`}>
                                       +{dayEvents.length - 2}
@@ -790,19 +985,27 @@ const Calendar = () => {
                           <div className="text-lg">{date.getDate()}</div>
                         </button>
                         <div className="space-y-1">
-                          {dayEvents.map(event => (
-                            <button
-                              key={event.id}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleEventClick(event)
-                              }}
-                              className="w-full text-xs p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 text-left"
-                            >
-                              <div className="font-semibold truncate">{event.title}</div>
-                              <div className="text-xs opacity-75">{event.time}</div>
-                            </button>
-                          ))}
+                          {dayEvents.map(event => {
+                            const eventColor = (event as any).color || '#3B82F6'
+                            return (
+                              <button
+                                key={event.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleEventClick(event)
+                                }}
+                                className="w-full text-xs p-1.5 rounded hover:opacity-80 text-left transition-opacity"
+                                style={{
+                                  backgroundColor: `${eventColor}20`,
+                                  color: eventColor,
+                                  borderLeft: `3px solid ${eventColor}`
+                                }}
+                              >
+                                <div className="font-semibold truncate">{event.title}</div>
+                                <div className="text-xs opacity-75">{event.time}</div>
+                              </button>
+                            )
+                          })}
                         </div>
                       </div>
                     )
@@ -835,16 +1038,24 @@ const Calendar = () => {
                           {hour.toString().padStart(2, '0')}:00
                         </div>
                         <div className="flex-1">
-                          {hourEvents.map(event => (
-                            <button
-                              key={event.id}
-                              onClick={() => handleEventClick(event)}
-                              className="w-full mb-2 p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 text-left"
-                            >
-                              <div className="font-semibold">{event.title}</div>
-                              <div className="text-sm opacity-75">{event.time}</div>
-                            </button>
-                          ))}
+                          {hourEvents.map(event => {
+                            const eventColor = (event as any).color || '#3B82F6'
+                            return (
+                              <button
+                                key={event.id}
+                                onClick={() => handleEventClick(event)}
+                                className="w-full mb-2 p-3 rounded-lg hover:opacity-80 text-left transition-opacity"
+                                style={{
+                                  backgroundColor: `${eventColor}20`,
+                                  color: eventColor,
+                                  borderLeft: `4px solid ${eventColor}`
+                                }}
+                              >
+                                <div className="font-semibold">{event.title}</div>
+                                <div className="text-sm opacity-75">{event.time}</div>
+                              </button>
+                            )
+                          })}
                         </div>
                       </div>
                     )
@@ -868,26 +1079,33 @@ const Calendar = () => {
               </p>
             ) : (
               <div className="space-y-3">
-                {selectedDateEvents.map((event) => (
-                  <button
-                    key={event.id}
-                    onClick={() => handleEventClick(event)}
-                    className="w-full text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border-2 border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
-                  >
-                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">{event.title}</h4>
-                    {event.description && (
-                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-2 line-clamp-2">{event.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-1">
-                      <FaClock /> {event.time}
-                    </div>
-                    {event.location && (
-                      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                        <FaMapMarkerAlt /> {event.location}
+                {selectedDateEvents.map((event) => {
+                  const eventColor = (event as any).color || '#3B82F6'
+                  return (
+                    <button
+                      key={event.id}
+                      onClick={() => handleEventClick(event)}
+                      className="w-full text-left p-4 rounded-lg border-2 hover:opacity-90 transition-all"
+                      style={{
+                        backgroundColor: `${eventColor}10`,
+                        borderColor: `${eventColor}40`
+                      }}
+                    >
+                      <h4 className="font-semibold mb-2" style={{ color: eventColor }}>{event.title}</h4>
+                      {event.description && (
+                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-2 line-clamp-2">{event.description}</p>
+                      )}
+                      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-1">
+                        <FaClock /> {event.time}
                       </div>
-                    )}
-                  </button>
-                ))}
+                      {event.location && (
+                        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                          <FaMapMarkerAlt /> {event.location}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1010,6 +1228,101 @@ const Calendar = () => {
                   </div>
                 </div>
               )}
+              {/* Best Time Suggestions */}
+              {eventType === 'meeting' && !selectedEvent && (
+                <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-xl border-2 border-green-200 dark:border-green-800">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <FaCalendarCheck className="text-green-600 dark:text-green-400 text-lg" />
+                      <h4 className="font-bold text-gray-900 dark:text-white">Best Time Suggestions</h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={calculateBestTimeSuggestions}
+                      disabled={bestTimeLoading}
+                      className="text-xs text-green-600 dark:text-green-400 hover:underline disabled:opacity-50"
+                    >
+                      {bestTimeLoading ? 'Calculating...' : 'Refresh'}
+                    </button>
+                  </div>
+                  
+                  {bestTimeLoading ? (
+                    <div className="flex items-center gap-2 text-green-600 dark:text-green-400 py-4">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                      <span className="text-sm">Analyzing your schedule...</span>
+                    </div>
+                  ) : bestTimeSuggestions.length > 0 ? (
+                    <div className="space-y-2">
+                      {bestTimeSuggestions.map((suggestion, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          onClick={() => {
+                            // Validate date is not in the past before applying
+                            const suggestionDate = new Date(suggestion.date)
+                            const today = new Date()
+                            today.setHours(0, 0, 0, 0)
+                            suggestionDate.setHours(0, 0, 0, 0)
+                            
+                            if (suggestionDate < today) {
+                              setToast({ 
+                                message: 'Cannot select past dates. Please choose a future date.', 
+                                type: 'error' 
+                              })
+                              return
+                            }
+                            
+                            const [from, to] = suggestion.time.split(' - ')
+                            setNewEvent({
+                              ...newEvent,
+                              date: suggestion.date,
+                              from: from,
+                              to: to
+                            })
+                          }}
+                          className="w-full text-left p-3 bg-white dark:bg-gray-800 border-2 border-green-300 dark:border-green-700 rounded-lg hover:border-green-500 dark:hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-900/30 transition-all"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-semibold text-gray-900 dark:text-white text-sm">
+                                {(() => {
+                                  const suggestionDate = new Date(suggestion.date)
+                                  const today = new Date()
+                                  today.setHours(0, 0, 0, 0)
+                                  suggestionDate.setHours(0, 0, 0, 0)
+                                  
+                                  // Validate date is not in the past
+                                  if (suggestionDate < today) {
+                                    return 'Invalid date (past)'
+                                  }
+                                  
+                                  return suggestionDate.toLocaleDateString('en-US', { 
+                                    weekday: 'short', 
+                                    month: 'short', 
+                                    day: 'numeric',
+                                    year: suggestionDate.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
+                                  })
+                                })()}
+                              </div>
+                              <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                {suggestion.time}
+                              </div>
+                            </div>
+                            <div className="text-xs px-2 py-1 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 rounded-full font-semibold">
+                              Best
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600 dark:text-gray-400 text-center py-4">
+                      No available time slots found. Try selecting a different date range.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -1018,7 +1331,25 @@ const Calendar = () => {
                   <input
                     type="time"
                     value={newEvent.from}
-                    onChange={(e) => setNewEvent({ ...newEvent, from: e.target.value })}
+                    onChange={(e) => {
+                      const selectedDate = new Date(newEvent.date)
+                      const today = new Date()
+                      today.setHours(0, 0, 0, 0)
+                      
+                      // If date is today, validate time is not in the past
+                      if (selectedDate.toDateString() === today.toDateString()) {
+                        const now = new Date()
+                        const [hour, minute] = e.target.value.split(':').map(Number)
+                        const selectedTime = new Date(now)
+                        selectedTime.setHours(hour, minute, 0, 0)
+                        
+                        if (selectedTime < now) {
+                          setToast({ message: 'Cannot select past times for today', type: 'warning' })
+                          return
+                        }
+                      }
+                      setNewEvent({ ...newEvent, from: e.target.value })
+                    }}
                     className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                     required
                   />
@@ -1030,9 +1361,17 @@ const Calendar = () => {
                   <input
                     type="time"
                     value={newEvent.to}
-                    onChange={(e) => setNewEvent({ ...newEvent, to: e.target.value })}
+                    onChange={(e) => {
+                      // Validate "to" time is after "from" time
+                      if (e.target.value <= newEvent.from) {
+                        setToast({ message: 'End time must be after start time', type: 'warning' })
+                        return
+                      }
+                      setNewEvent({ ...newEvent, to: e.target.value })
+                    }}
                     className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                     required
+                    min={newEvent.from}
                   />
                 </div>
               </div>
@@ -1044,9 +1383,13 @@ const Calendar = () => {
                   type="date"
                   value={newEvent.date}
                   onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
+                  min={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                   required
                 />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Cannot select past dates
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -1284,6 +1627,7 @@ const Calendar = () => {
                   </div>
                 )}
               </div>
+
               <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                 {/* Accept/Decline buttons for pending invites */}
                 {selectedEvent.isInvite === true && 

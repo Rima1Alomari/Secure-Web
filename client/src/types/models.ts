@@ -84,8 +84,8 @@ export interface AuditLog {
   id: string
   userId: string
   userName: string
-  action: 'access' | 'view' | 'download' | 'upload' | 'delete' | 'modify' | 'share'
-  resourceType: 'file' | 'room' | 'meeting' | 'user' | 'settings'
+  action: 'access' | 'view' | 'download' | 'upload' | 'delete' | 'modify' | 'share' | 'screenshot_attempt'
+  resourceType: 'file' | 'room' | 'meeting' | 'user' | 'settings' | 'system'
   resourceId: string
   resourceName: string
   classification?: 'Normal' | 'Confidential' | 'Restricted'
@@ -94,6 +94,7 @@ export interface AuditLog {
   userAgent?: string
   success: boolean
   reason?: string // If access was denied, reason why
+  details?: Record<string, any> // Additional details for the audit log
 }
 
 export interface AccessRule {

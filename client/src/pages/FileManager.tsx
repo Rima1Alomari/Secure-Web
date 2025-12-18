@@ -14,7 +14,10 @@ import {
   FaFileAlt,
   FaFolder,
   FaTag,
-  FaStickyNote
+  FaStickyNote,
+  FaLock,
+  FaUserCheck,
+  FaUserTimes
 } from 'react-icons/fa'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, nowISO } from '../data/storage'
@@ -23,6 +26,7 @@ import { FileItem, Room } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import { trackFileOpened } from '../utils/recentTracker'
 import { getToken } from '../utils/auth'
+import { auditHelpers, logAuditEvent } from '../utils/audit'
 
 const API_URL = (import.meta as any).env.VITE_API_URL || '/api'
 
@@ -44,6 +48,7 @@ const FileManager = () => {
   const [showInstructionModal, setShowInstructionModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [showClassificationModal, setShowClassificationModal] = useState(false)
+  const [showPermissionModal, setShowPermissionModal] = useState(false)
   
   // Form states
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
@@ -51,6 +56,17 @@ const FileManager = () => {
   const [labelValue, setLabelValue] = useState<'Important' | 'Action' | 'Plan' | 'FYI' | ''>('')
   const [instructionValue, setInstructionValue] = useState('')
   const [fileClassification, setFileClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
+  const [filePermissions, setFilePermissions] = useState<{
+    canView: string[]
+    canEdit: string[]
+    canDownload: string[]
+    canDelete: string[]
+  }>({
+    canView: [],
+    canEdit: [],
+    canDownload: [],
+    canDelete: []
+  })
   
   // File upload queue
   const [fileUploadQueue, setFileUploadQueue] = useState<Array<{ file: globalThis.File; classification: 'Normal' | 'Confidential' | 'Restricted' }>>([])
@@ -283,10 +299,14 @@ const FileManager = () => {
         const allFiles = getJSON<FileItem[]>(FILES_KEY, []) || []
         setJSON(FILES_KEY, [...allFiles, newFileItem])
         setFiles(prev => [...prev, newFileItem])
-            setToast({ 
+        
+        // Log audit event
+        auditHelpers.logFileUpload(file.name, newFileItem.id, classification)
+        
+        setToast({ 
           message: `File "${file.name}" uploaded successfully (demo mode)`, 
           type: 'success' 
-            })
+        })
         return
       }
       
@@ -339,6 +359,9 @@ const FileManager = () => {
         const uploadedFile = completeResponse.data.file
         const newFileItem = mapBackendFileToFileItem(uploadedFile)
         
+        // Log audit event
+        auditHelpers.logFileUpload(file.name, newFileItem.id, classification)
+        
         setFiles(prev => [...prev, newFileItem])
         setToast({ 
           message: `File "${file.name}" uploaded successfully`, 
@@ -377,6 +400,9 @@ const FileManager = () => {
 
     const uploadedFile = response.data.file
     const newFileItem = mapBackendFileToFileItem(uploadedFile)
+    
+    // Log audit event
+    auditHelpers.logFileUpload(file.name, newFileItem.id, classification)
     
     setFiles(prev => [...prev, newFileItem])
     setToast({ 
@@ -429,6 +455,9 @@ const FileManager = () => {
         document.body.removeChild(link)
         window.URL.revokeObjectURL(url)
         setToast({ message: `Downloading "${file.name}"`, type: 'info' })
+        
+        // Log audit event
+        auditHelpers.logFileDownload(file.name, file.id, file.classification)
       }
     } catch (error: any) {
       console.error('Error downloading file:', error)
@@ -506,6 +535,10 @@ const FileManager = () => {
           ? { ...f, name: renameValue }
           : f
       ))
+      
+      // Log audit event
+      logAuditEvent('modify', 'file', selectedFile.id, selectedFile.name, true, selectedFile.classification)
+      
       setToast({ message: 'File renamed', type: 'success' })
       setShowRenameModal(false)
       setSelectedFile(null)
@@ -777,6 +810,23 @@ const FileManager = () => {
                                 title="Add Instruction"
                               >
                                 <FaStickyNote />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(file)
+                                  // Initialize permissions from file data
+                                  setFilePermissions({
+                                    canView: file.sharedWith || [],
+                                    canEdit: (file as any).permissions?.canEdit || [],
+                                    canDownload: (file as any).permissions?.canDownload || [],
+                                    canDelete: (file as any).permissions?.canDelete || []
+                                  })
+                                  setShowPermissionModal(true)
+                                }}
+                                className="btn-secondary px-3 py-1.5"
+                                title="Manage Permissions"
+                              >
+                                <FaLock />
                               </button>
                         </>
                       )}
@@ -1051,6 +1101,215 @@ const FileManager = () => {
             type={toast.type}
             onClose={() => setToast(null)}
           />
+        )}
+
+        {/* Permission Control Modal */}
+        {isAdmin && (
+          <Modal
+            isOpen={showPermissionModal}
+            onClose={() => {
+              setShowPermissionModal(false)
+              setSelectedFile(null)
+              setFilePermissions({
+                canView: [],
+                canEdit: [],
+                canDownload: [],
+                canDelete: []
+              })
+            }}
+            title="File Permission Control"
+            size="lg"
+          >
+            <div className="space-y-6">
+              {selectedFile && (
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    File: <span className="font-semibold text-gray-900 dark:text-white">{selectedFile.name}</span>
+                  </p>
+                </div>
+              )}
+
+              {/* Can View */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                  <FaUserCheck className="text-blue-600 dark:text-blue-400" />
+                  Can View
+                </label>
+                <div className="space-y-2">
+                  {rooms.map(room => (
+                    <label key={room.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filePermissions.canView.includes(room.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canView: [...prev.canView, room.id]
+                            }))
+                          } else {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canView: prev.canView.filter(id => id !== room.id)
+                            }))
+                          }
+                        }}
+                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-gray-900 dark:text-white">{room.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Can Edit */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                  <FaEdit className="text-green-600 dark:text-green-400" />
+                  Can Edit
+                </label>
+                <div className="space-y-2">
+                  {rooms.map(room => (
+                    <label key={room.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filePermissions.canEdit.includes(room.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canEdit: [...prev.canEdit, room.id]
+                            }))
+                          } else {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canEdit: prev.canEdit.filter(id => id !== room.id)
+                            }))
+                          }
+                        }}
+                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-gray-900 dark:text-white">{room.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Can Download */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                  <FaDownload className="text-purple-600 dark:text-purple-400" />
+                  Can Download
+                </label>
+                <div className="space-y-2">
+                  {rooms.map(room => (
+                    <label key={room.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filePermissions.canDownload.includes(room.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canDownload: [...prev.canDownload, room.id]
+                            }))
+                          } else {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canDownload: prev.canDownload.filter(id => id !== room.id)
+                            }))
+                          }
+                        }}
+                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-gray-900 dark:text-white">{room.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Can Delete */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                  <FaUserTimes className="text-red-600 dark:text-red-400" />
+                  Can Delete
+                </label>
+                <div className="space-y-2">
+                  {rooms.map(room => (
+                    <label key={room.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filePermissions.canDelete.includes(room.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canDelete: [...prev.canDelete, room.id]
+                            }))
+                          } else {
+                            setFilePermissions(prev => ({
+                              ...prev,
+                              canDelete: prev.canDelete.filter(id => id !== room.id)
+                            }))
+                          }
+                        }}
+                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-gray-900 dark:text-white">{room.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowPermissionModal(false)
+                    setSelectedFile(null)
+                    setFilePermissions({
+                      canView: [],
+                      canEdit: [],
+                      canDownload: [],
+                      canDelete: []
+                    })
+                  }}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (selectedFile) {
+                      // Update file with permissions
+                      const updatedFiles = files.map(f => {
+                        if (f.id === selectedFile.id) {
+                          return {
+                            ...f,
+                            sharedWith: filePermissions.canView,
+                            permissions: {
+                              canView: filePermissions.canView,
+                              canEdit: filePermissions.canEdit,
+                              canDownload: filePermissions.canDownload,
+                              canDelete: filePermissions.canDelete
+                            }
+                          }
+                        }
+                        return f
+                      })
+                      setFiles(updatedFiles)
+                      setJSON(FILES_KEY, updatedFiles)
+                      setToast({ message: 'File permissions updated', type: 'success' })
+                      setShowPermissionModal(false)
+                      setSelectedFile(null)
+                    }
+                  }}
+                  className="btn-primary flex-1"
+                >
+                  <FaLock /> Save Permissions
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
       </div>
     </div>

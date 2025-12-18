@@ -20,6 +20,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { UserProvider } from './contexts/UserContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import RoleBasedRedirect from './components/RoleBasedRedirect'
+import ScreenshotProtection from './components/ScreenshotProtection'
 import { getToken, isAuthenticated as checkAuth } from './utils/auth'
 
 function App() {
@@ -56,6 +57,7 @@ function App() {
   return (
     <ErrorBoundary>
       <UserProvider>
+        <ScreenshotProtection />
         <Routes>
           {/* Public routes */}
           <Route 

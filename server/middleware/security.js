@@ -3,6 +3,10 @@ import { body, validationResult } from 'express-validator'
 import { isSaudiIP } from '../utils/ksaCompliance.js'
 import crypto from 'crypto'
 
+// Threat detection store (in-memory, should be Redis in production)
+const threatStore = new Map()
+const suspiciousActivityStore = new Map()
+
 // Device fingerprinting (simplified)
 export const deviceFingerprint = (req, res, next) => {
   const fingerprint = req.headers['user-agent'] + req.ip
@@ -94,8 +98,157 @@ export const secureErrorHandler = (err, req, res, next) => {
   })
 }
 
+// Advanced threat detection middleware
+export const advancedThreatDetection = (req, res, next) => {
+  if (process.env.NODE_ENV === 'development') {
+    return next()
+  }
+
+  const clientIP = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0]
+  const userAgent = req.headers['user-agent'] || ''
+  const timestamp = Date.now()
+
+  // Check for suspicious patterns
+  const suspiciousPatterns = [
+    /sql.*injection/i,
+    /xss|script|javascript/i,
+    /union.*select/i,
+    /\.\.\/|\.\.\\|directory.*traversal/i,
+    /eval\(|exec\(|system\(/i
+  ]
+
+  const requestBody = JSON.stringify(req.body || {})
+  const requestQuery = JSON.stringify(req.query || {})
+  const requestPath = req.path || ''
+
+  // Check request for suspicious patterns
+  const allRequestData = requestBody + requestQuery + requestPath
+  for (const pattern of suspiciousPatterns) {
+    if (pattern.test(allRequestData)) {
+      // Log threat
+      const threatId = crypto.createHash('sha256').update(`${clientIP}-${timestamp}`).digest('hex')
+      threatStore.set(threatId, {
+        type: 'suspicious_pattern',
+        ip: clientIP,
+        path: requestPath,
+        pattern: pattern.toString(),
+        timestamp,
+        userAgent
+      })
+
+      return res.status(403).json({
+        error: 'Suspicious activity detected',
+        message: 'Your request has been flagged for security review.'
+      })
+    }
+  }
+
+  // Rate-based threat detection
+  const ipKey = `ip:${clientIP}`
+  const ipActivity = suspiciousActivityStore.get(ipKey) || { count: 0, firstSeen: timestamp }
+  
+  // Reset if more than 1 hour has passed
+  if (timestamp - ipActivity.firstSeen > 3600000) {
+    ipActivity.count = 0
+    ipActivity.firstSeen = timestamp
+  }
+
+  ipActivity.count++
+  suspiciousActivityStore.set(ipKey, ipActivity)
+
+  // Block if too many requests from same IP
+  if (ipActivity.count > 100) {
+    return res.status(429).json({
+      error: 'Too many requests',
+      message: 'Please try again later.'
+    })
+  }
+
+  // Check for unusual user agent patterns
+  if (userAgent.length < 10 || userAgent.length > 500) {
+    const threatId = crypto.createHash('sha256').update(`${clientIP}-${timestamp}`).digest('hex')
+    threatStore.set(threatId, {
+      type: 'suspicious_user_agent',
+      ip: clientIP,
+      userAgent,
+      timestamp
+    })
+  }
+
+  next()
+}
+
+// Session security middleware
+export const sessionSecurity = (req, res, next) => {
+  if (process.env.NODE_ENV === 'development') {
+    return next()
+  }
+
+  // Check for session hijacking indicators
+  const sessionId = req.headers['x-session-id'] || req.cookies?.sessionId
+  if (sessionId) {
+    const sessionKey = `session:${sessionId}`
+    const sessionData = threatStore.get(sessionKey)
+    
+    if (sessionData) {
+      const clientIP = req.ip || req.connection.remoteAddress
+      // Check if session IP matches current IP
+      if (sessionData.ip && sessionData.ip !== clientIP) {
+        return res.status(403).json({
+          error: 'Session security violation',
+          message: 'Your session has been invalidated due to security concerns.'
+        })
+      }
+    }
+  }
+
+  next()
+}
+
+// Content Security Policy headers
+export const contentSecurityPolicy = (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Content-Security-Policy', 
+      "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: https:; " +
+      "font-src 'self' data:; " +
+      "connect-src 'self' https://api.openai.com;"
+    )
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('X-XSS-Protection', '1; mode=block')
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  }
+  next()
+}
+
+// Get threat statistics (for admin dashboard)
+export const getThreatStatistics = () => {
+  const threats = Array.from(threatStore.values())
+  const last24Hours = Date.now() - (24 * 60 * 60 * 1000)
+  
+  return {
+    total: threats.length,
+    last24Hours: threats.filter(t => t.timestamp > last24Hours).length,
+    byType: threats.reduce((acc, threat) => {
+      acc[threat.type] = (acc[threat.type] || 0) + 1
+      return acc
+    }, {}),
+    recent: threats
+      .filter(t => t.timestamp > last24Hours)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 10)
+  }
+}
+
 // Initialize security middleware
 export const initializeSecurityMiddleware = (app) => {
+  // Apply content security headers
+  app.use(contentSecurityPolicy)
+  
   // Skip device fingerprinting in development mode for all routes
   app.use((req, res, next) => {
     // Skip security middleware for auth and AI routes in development
@@ -109,6 +262,13 @@ export const initializeSecurityMiddleware = (app) => {
     }
     deviceFingerprint(req, res, next)
   })
+  
+  // Advanced threat detection (skip in development)
+  if (process.env.NODE_ENV === 'production') {
+    app.use(advancedThreatDetection)
+    app.use(sessionSecurity)
+  }
+  
   app.use(secureErrorHandler)
 }
 

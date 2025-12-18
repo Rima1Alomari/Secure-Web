@@ -7,17 +7,21 @@ import {
   FaChevronRight,
   FaDownload,
   FaChevronDown,
-  FaChevronUp
+  FaChevronUp,
+  FaShieldAlt,
+  FaExclamationTriangle,
+  FaCheckCircle
 } from 'react-icons/fa'
 import { Toast } from '../components/common'
 import { getJSON } from '../data/storage'
-import { ROOMS_KEY, EVENTS_KEY, FILES_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
-import { Room, EventItem, FileItem, ChatMessage } from '../types/models'
+import { ROOMS_KEY, EVENTS_KEY, FILES_KEY, CHAT_MESSAGES_KEY, AUDIT_LOGS_KEY } from '../data/keys'
+import { Room, EventItem, FileItem, ChatMessage, AuditLog } from '../types/models'
 import { useUser } from '../contexts/UserContext'
+import { getScreenshotAttempts } from '../utils/screenshotProtection'
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const { user } = useUser()
+  const { role } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   
   // Modal states
@@ -34,27 +38,28 @@ const Dashboard = () => {
     return () => clearTimeout(timer)
   }, [])
 
+  // Listen for real-time screenshot attempts
+  useEffect(() => {
+    const handleScreenshotAttempt = () => {
+      // Trigger refresh of security alerts
+      setRefreshKey((prev: number) => prev + 1)
+    }
+
+    window.addEventListener('screenshot-attempt', handleScreenshotAttempt)
+    return () => {
+      window.removeEventListener('screenshot-attempt', handleScreenshotAttempt)
+    }
+  }, [])
+
   // State to trigger refresh
-  const [refreshKey] = useState(0)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Get rooms with last message and unread count
-  // Only show rooms where the user is a member or is the owner
   const rooms = useMemo(() => {
-    if (!user?.id) return []
-    
     const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
     const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
     
-    // Filter rooms: user must be owner OR member
-    const userRooms = allRooms.filter(room => {
-      // User is the owner
-      if (room.ownerId === user.id) return true
-      // User is in the memberIds list
-      if (room.memberIds && room.memberIds.includes(user.id)) return true
-      return false
-    })
-    
-    return userRooms.map(room => {
+    return allRooms.map(room => {
       const roomMessages = allMessages
         .filter(msg => msg.roomId === room.id)
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
@@ -69,7 +74,7 @@ const Dashboard = () => {
         unreadCount: unreadCount || 0,
       }
     }).sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime())
-  }, [refreshKey, user?.id])
+  }, [refreshKey])
 
   // Get upcoming meetings (next 3-5) - connected to Calendar events
   const upcomingMeetings = useMemo(() => {
@@ -116,6 +121,81 @@ const Dashboard = () => {
       })
       .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
   }, [rooms, refreshKey])
+
+  // Get security alerts from audit logs and screenshot attempts
+  const securityAlerts = useMemo(() => {
+    const allAuditLogs = getJSON<AuditLog[]>(AUDIT_LOGS_KEY, []) || []
+    const screenshotAttempts = getScreenshotAttempts()
+    const now = new Date()
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    
+    // Get alerts from audit logs
+    const auditAlerts = allAuditLogs
+      .filter(log => {
+        const logTime = new Date(log.timestamp)
+        return logTime >= last24Hours && 
+               (log.action === 'access' && !log.success || 
+                log.action === 'delete' || 
+                log.classification === 'Restricted' ||
+                log.action === 'modify' ||
+                log.action === 'screenshot_attempt')
+      })
+      .map(log => ({
+        id: log.id,
+        type: log.action === 'delete' ? 'critical' : 
+              log.action === 'screenshot_attempt' ? 'high' :
+              log.classification === 'Restricted' ? 'high' : 'medium',
+        message: log.action === 'screenshot_attempt' 
+          ? `Screenshot attempt blocked at ${log.details?.location || 'unknown location'}`
+          : `${log.action} attempt on ${log.resourceName}`,
+        timestamp: log.timestamp,
+        status: log.success ? 'Resolved' : 'Investigating',
+        location: log.details?.location || undefined
+      }))
+
+    // Get alerts from screenshot attempts (for non-admin users)
+    const screenshotAlerts = screenshotAttempts
+      .filter(attempt => {
+        const attemptTime = new Date(attempt.timestamp)
+        return attemptTime >= last24Hours && attempt.blocked
+      })
+      .map(attempt => ({
+        id: attempt.id,
+        type: 'high' as const,
+        message: `Screenshot attempt blocked at ${attempt.location}`,
+        timestamp: attempt.timestamp,
+        status: 'Investigating' as const,
+        location: attempt.location,
+        userName: attempt.userName
+      }))
+
+    // Combine and sort by timestamp (most recent first)
+    const allAlerts = [...auditAlerts, ...screenshotAlerts]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 5)
+
+    return allAlerts
+  }, [refreshKey])
+
+  // Get active security incidents (for security team)
+  const activeSecurityIncidents = useMemo(() => {
+    if (role !== 'admin' && role !== 'security') return []
+    
+    const incidents = getJSON<any[]>('security-incidents', []) || []
+    return incidents
+      .filter(incident => 
+        incident.status === 'open' || 
+        incident.status === 'investigating' || 
+        incident.status === 'contained'
+      )
+      .sort((a, b) => {
+        const severityOrder = { critical: 4, high: 3, medium: 2, low: 1 }
+        return (severityOrder[b.severity as keyof typeof severityOrder] || 0) - 
+               (severityOrder[a.severity as keyof typeof severityOrder] || 0)
+      })
+      .slice(0, 3)
+  }, [role, refreshKey])
+
 
 
 
@@ -232,6 +312,153 @@ const Dashboard = () => {
         {/* Page Header */}
         <div className="page-header">
           <h1 className="page-title">Dashboard</h1>
+        </div>
+
+        {/* Security Collaboration Section - For Security Team */}
+        {(role === 'admin' || role === 'security') && activeSecurityIncidents.length > 0 && (
+          <div className="mb-4">
+            <div className="card p-4 border-l-4 border-l-red-600">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <FaShieldAlt className="text-red-600 dark:text-red-400 text-base" />
+                  Active Security Incidents
+                </h2>
+                <button
+                  onClick={() => navigate('/security', { state: { tab: 'incidents' } })}
+                  className="text-xs text-slate-700 dark:text-slate-300 hover:underline flex items-center gap-1"
+                >
+                  Manage all <FaChevronRight className="text-[10px]" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {activeSecurityIncidents.map((incident: any) => (
+                  <div
+                    key={incident.id}
+                    className={`p-3 rounded-md border ${
+                      incident.severity === 'critical'
+                        ? 'border-red-600 bg-red-50 dark:bg-red-900/20'
+                        : incident.severity === 'high'
+                        ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
+                        : 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                            incident.severity === 'critical' ? 'bg-red-700 text-white' :
+                            incident.severity === 'high' ? 'bg-red-600 text-white' :
+                            incident.severity === 'medium' ? 'bg-yellow-600 text-white' :
+                            'bg-blue-600 text-white'
+                          }`}>
+                            {incident.severity?.toUpperCase()}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            incident.status === 'open' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
+                            incident.status === 'investigating' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300' :
+                            'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                          }`}>
+                            {incident.status?.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
+                          {incident.title}
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1">
+                          {incident.description}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Security Alerts */}
+        <div className="mb-4">
+          <div className="card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <FaShieldAlt className="text-slate-600 dark:text-slate-400 text-base" />
+                Security Alerts
+              </h2>
+              <button
+                onClick={() => navigate('/security')}
+                className="text-xs text-slate-700 dark:text-slate-300 hover:underline flex items-center gap-1"
+              >
+                View all <FaChevronRight className="text-[10px]" />
+              </button>
+            </div>
+            
+            {securityAlerts.length === 0 ? (
+              <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+                <FaCheckCircle className="text-2xl mx-auto mb-2 opacity-50 text-green-500" />
+                <p className="text-xs">No security alerts in the last 24 hours</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {securityAlerts.slice(0, 3).map((alert) => (
+                  <div
+                    key={alert.id}
+                    className={`p-2 rounded-lg border ${
+                      alert.type === 'critical'
+                        ? 'border-red-500 dark:border-red-400 bg-red-50 dark:bg-red-900/20'
+                        : alert.type === 'high'
+                        ? 'border-orange-500 dark:border-orange-400 bg-orange-50 dark:bg-orange-900/20'
+                        : 'border-yellow-500 dark:border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <FaExclamationTriangle className={`text-xs flex-shrink-0 ${
+                            alert.type === 'critical' ? 'text-red-600' : 
+                            alert.type === 'high' ? 'text-orange-600' : 'text-yellow-600'
+                          }`} />
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                            alert.type === 'critical'
+                              ? 'bg-red-600 text-white'
+                              : alert.type === 'high'
+                              ? 'bg-orange-600 text-white'
+                              : 'bg-yellow-600 text-white'
+                          }`}>
+                            {alert.type.toUpperCase()}
+                          </span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            alert.status === 'Resolved'
+                              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                              : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                          }`}>
+                            {alert.status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-900 dark:text-white mb-0.5 line-clamp-1">
+                          {alert.message}
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400 flex-wrap">
+                          <span>{new Date(alert.timestamp).toLocaleString()}</span>
+                          {'location' in alert && alert.location && (
+                            <span>
+                              <span> • </span>
+                              <span className="text-gray-400 dark:text-gray-500">Location: {alert.location}</span>
+                            </span>
+                          )}
+                          {'userName' in alert && alert.userName && (
+                            <span>
+                              <span> • </span>
+                              <span className="text-gray-400 dark:text-gray-500">User: {String(alert.userName)}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-8">

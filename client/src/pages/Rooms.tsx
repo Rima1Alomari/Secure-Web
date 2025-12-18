@@ -8,13 +8,14 @@ import { Room, ChatMessage, AdminUserMock } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import axios from 'axios'
 import { getToken } from '../utils/auth'
+import { auditHelpers } from '../utils/audit'
 
 const Rooms = () => {
   const navigate = useNavigate()
   const { role, user } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [newRoom, setNewRoom] = useState({ name: '', description: '', isPrivate: false })
+  const [newRoom, setNewRoom] = useState({ name: '', description: '' })
   const [roomClassification, setRoomClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
   const [inviteSearchQuery, setInviteSearchQuery] = useState('')
   const [invitedUserIds, setInvitedUserIds] = useState<string[]>([])
@@ -173,21 +174,31 @@ const Rooms = () => {
       maxMembers: 50,
       createdAt: nowISO(),
       updatedAt: nowISO(),
-      ownerId: user.id, // Set the creator as owner
+      ownerId: String(user.id), // Set the creator as owner (ensure string)
       roomLevel: roomClassification,
       classification: roomClassification,
-      memberIds: allMemberIds, // Add creator and invited users
+      memberIds: allMemberIds, // Add creator and invited users (all as strings)
     }
 
     const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-    setJSON(ROOMS_KEY, [...allRooms, room])
-    setNewRoom({ name: '', description: '', isPrivate: false })
-    setRoomClassification('Normal')
-    setInviteSearchQuery('')
-    setInvitedUserIds([])
-    setShowCreateModal(false)
-    setRefreshKey(prev => prev + 1)
-    setToast({ message: `Room created successfully${invitedUserIds.length > 0 ? ` with ${invitedUserIds.length} invite${invitedUserIds.length > 1 ? 's' : ''}` : ''}`, type: 'success' })
+    // Check if room with same name already exists (prevent duplicates)
+    const roomExists = allRooms.some(r => r.name === room.name && r.ownerId === room.ownerId)
+    if (!roomExists) {
+      setJSON(ROOMS_KEY, [...allRooms, room])
+      
+      // Log audit event
+      auditHelpers.logRoomCreate(room.name, room.id)
+      
+      setNewRoom({ name: '', description: '', isPrivate: false })
+      setRoomClassification('Normal')
+      setInviteSearchQuery('')
+      setInvitedUserIds([])
+      setShowCreateModal(false)
+      setRefreshKey(prev => prev + 1)
+      setToast({ message: `Room created successfully${invitedUserIds.length > 0 ? ` with ${invitedUserIds.length} invite${invitedUserIds.length > 1 ? 's' : ''}` : ''}`, type: 'success' })
+    } else {
+      setToast({ message: 'A room with this name already exists', type: 'error' })
+    }
   }
 
   const handleInviteUser = (userId: string) => {
@@ -834,7 +845,7 @@ const Rooms = () => {
           isOpen={showCreateModal}
           onClose={() => {
             setShowCreateModal(false)
-            setNewRoom({ name: '', description: '', isPrivate: false })
+            setNewRoom({ name: '', description: '' })
             setRoomClassification('Normal')
             setInviteSearchQuery('')
             setInvitedUserIds([])
@@ -866,18 +877,6 @@ const Rooms = () => {
                 placeholder="Enter room description"
                 rows={3}
               />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="private"
-                checked={newRoom.isPrivate}
-                onChange={(e) => setNewRoom({ ...newRoom, isPrivate: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-              />
-              <label htmlFor="private" className="text-sm text-gray-700 dark:text-gray-300">
-                Private Room
-              </label>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -995,7 +994,7 @@ const Rooms = () => {
               <button
                 onClick={() => {
                   setShowCreateModal(false)
-                  setNewRoom({ name: '', description: '', isPrivate: false })
+                  setNewRoom({ name: '', description: '' })
                   setRoomClassification('Normal')
                   setInviteSearchQuery('')
                   setInvitedUserIds([])
