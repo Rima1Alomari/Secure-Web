@@ -177,9 +177,9 @@ const Dashboard = () => {
     return allAlerts
   }, [refreshKey])
 
-  // Get active security incidents (for security team)
+  // Get active security incidents (for admin)
   const activeSecurityIncidents = useMemo(() => {
-    if (role !== 'admin' && role !== 'security') return []
+    if (role !== 'admin') return []
     
     const incidents = getJSON<any[]>('security-incidents', []) || []
     return incidents
@@ -314,8 +314,8 @@ const Dashboard = () => {
           <h1 className="page-title">Dashboard</h1>
         </div>
 
-        {/* Security Collaboration Section - For Security Team */}
-        {(role === 'admin' || role === 'security') && activeSecurityIncidents.length > 0 && (
+        {/* Security Collaboration Section - For Admin */}
+        {role === 'admin' && activeSecurityIncidents.length > 0 && (
           <div className="mb-4">
             <div className="card p-4 border-l-4 border-l-red-600">
               <div className="flex items-center justify-between mb-3">
@@ -487,8 +487,8 @@ const Dashboard = () => {
                     onClick={() => handleRoomClick(room.id)}
                     className={`w-full text-left p-3 rounded-xl border-2 min-h-[62px] transition-colors ${
                       room.unreadCount && room.unreadCount > 0
-                        ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30'
-                        : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                        ? 'border-blue-300 dark:border-blue-400 bg-blue-50/50 dark:bg-blue-900/20 hover:bg-blue-50 dark:hover:bg-blue-900/30'
+                        : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -606,7 +606,7 @@ const Dashboard = () => {
                         <span>by {file.owner}</span>
                       </div>
                       {expandedFileId === file.id && file.adminNote && (
-                        <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <div className="mt-2 p-3 bg-blue-50/50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                           <p className="text-sm text-gray-700 dark:text-gray-300">
                             <strong>Admin Note:</strong> {file.adminNote}
                           </p>

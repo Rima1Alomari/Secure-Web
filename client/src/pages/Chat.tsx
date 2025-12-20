@@ -1,9 +1,17 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus, FaTimes } from 'react-icons/fa'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { ROOMS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
-import { Room, ChatMessage, DirectChat, AdminUserMock } from '../types/models'
+import { CHAT_MESSAGES_KEY } from '../data/keys'
+import { Room, ChatMessage, DirectChat } from '../types/models'
 import { useUser } from '../contexts/UserContext'
+import { 
+  subscribeToRooms, 
+  subscribeToMessages, 
+  sendMessage as sendFirestoreMessage,
+  subscribeToUsers,
+  markMessageAsRead
+} from '../services/firestore'
+import { useRealtimeUsers } from '../hooks/useRealtimeUsers'
 
 type ChatType = 'room' | 'direct'
 type SelectedChat = { type: ChatType; id: string; name: string } | null
@@ -14,37 +22,48 @@ const Chat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
+  const [, setRefreshKey] = useState(0)
   const [dmSearchQuery, setDmSearchQuery] = useState('')
   const [messageSearchQuery, setMessageSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ChatMessage[]>([])
   const [showSearchResults, setShowSearchResults] = useState(false)
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [allUsers, setAllUsers] = useState<any[]>([])
+  const { users: realtimeUsers } = useRealtimeUsers()
 
-  // Get rooms - only show rooms where the user is a member or is the owner
-  const rooms = useMemo(() => {
-    if (!user?.id) return []
-    
-    const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-    
-    // Filter rooms: user must be owner OR member
-    return allRooms.filter(room => {
-      // User is the owner
-      if (room.ownerId === user.id) return true
-      // User is in the memberIds list
-      if (room.memberIds && room.memberIds.includes(user.id)) return true
-      return false
+  // Subscribe to rooms in real-time
+  useEffect(() => {
+    if (!user?.id) return
+
+    const unsubscribe = subscribeToRooms((firestoreRooms) => {
+      // Filter rooms: user must be owner OR member
+      const filteredRooms = firestoreRooms.filter((room: any) => {
+        if (room.ownerId === user.id) return true
+        if (room.memberIds && room.memberIds.includes(user.id)) return true
+        return false
+      })
+      setRooms(filteredRooms)
     })
-  }, [refreshKey, user?.id])
 
-  // Get all messages
-  const allMessages = useMemo(() => {
-    return getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-  }, [refreshKey])
+    return () => unsubscribe()
+  }, [user?.id])
 
-  // Get all users for search
-  const allUsers = useMemo(() => {
-    return getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+  // Subscribe to all users in real-time
+  useEffect(() => {
+    const unsubscribe = subscribeToUsers((firestoreUsers) => {
+      setAllUsers(firestoreUsers)
+    })
+
+    return () => unsubscribe()
   }, [])
+
+  // Use realtime users if available, otherwise fallback to allUsers
+  const availableUsers = realtimeUsers.length > 0 ? realtimeUsers : allUsers
+
+  // Get all messages - now handled by real-time subscription per room
+  const allMessages: ChatMessage[] = useMemo(() => {
+    return messages // Messages are now loaded per chat via subscription
+  }, [messages])
 
   // Get direct chats (simple implementation)
   const directChats = useMemo(() => {
@@ -107,20 +126,24 @@ const Chat = () => {
     
     // Get users who don't have existing direct chats
     const existingChatUserIds = new Set(directChats.map(chat => chat.userId))
-    const availableUsers = allUsers.filter(u => 
+    const usersToShow = availableUsers.filter((u: any) => 
       u.id !== user?.id && !existingChatUserIds.has(u.id)
     )
     
     // If searching, filter by query; otherwise show all available users
     if (query) {
-      return availableUsers
-        .filter(u => u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
+      return usersToShow
+        .filter((u: any) => {
+          const name = (u.name || u.email || '').toLowerCase()
+          const email = (u.email || '').toLowerCase()
+          return name.includes(query) || email.includes(query)
+        })
         .slice(0, 10)
     } else {
       // Show all available users (limit to 20 for performance)
-      return availableUsers.slice(0, 20)
+      return usersToShow.slice(0, 20)
     }
-  }, [allUsers, dmSearchQuery, directChats, user?.id])
+  }, [availableUsers, dmSearchQuery, directChats, user?.id])
 
   const handleStartChat = (targetUserId: string, targetUserName: string) => {
     if (!user?.id) return
@@ -130,35 +153,63 @@ const Chat = () => {
     setDmSearchQuery('')
   }
 
-  // Load messages for selected chat
+  // Load messages for selected chat - real-time subscription
   useEffect(() => {
-    if (!selectedChat) {
+    if (!selectedChat || !user?.id) {
       setMessages([])
       return
     }
 
-    const chatMessages = allMessages
-      .filter(msg => {
-        if (selectedChat.type === 'room') {
-          return msg.roomId === selectedChat.id
-        } else {
-          // Direct chat: message is between current user and the other user
-          const chatId = selectedChat.id.split('-')
+    let unsubscribe: (() => void) | null = null
+
+    if (selectedChat.type === 'room') {
+      // Subscribe to room messages
+      unsubscribe = subscribeToMessages(selectedChat.id, (firestoreMessages) => {
+        const formattedMessages: ChatMessage[] = firestoreMessages.map((msg: any) => ({
+          id: msg.id,
+          sender: msg.senderName || msg.userName || 'Unknown',
+          senderId: msg.userId || msg.senderId,
+          message: msg.text || msg.content || msg.message || '',
+          timestamp: msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp),
+          isOwn: (msg.userId || msg.senderId) === user.id,
+          read: msg.readBy?.includes(user.id) || false,
+          roomId: msg.roomId
+        }))
+
+        // Mark messages as read
+        formattedMessages.forEach(msg => {
+          if (!msg.isOwn && !msg.read) {
+            markMessageAsRead(msg.id, user.id).catch(console.error)
+          }
+        })
+
+        setMessages(formattedMessages)
+      })
+    } else {
+      // For direct messages, we need to handle differently
+      // For now, fallback to localStorage approach but could be enhanced
+      const chatId = selectedChat.id.split('-')
+      const chatMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+      const filtered = chatMessages
+        .filter(msg => {
           return (
             !msg.roomId &&
             ((msg.senderId === chatId[0] && msg.recipientId === chatId[1]) ||
              (msg.senderId === chatId[1] && msg.recipientId === chatId[0]))
           )
-        }
-      })
-      .sort((a, b) => {
-        const timeA = typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : a.timestamp.getTime()
-        const timeB = typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : b.timestamp.getTime()
-        return timeA - timeB
-      })
+        })
+        .sort((a, b) => {
+          const timeA = typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : a.timestamp.getTime()
+          const timeB = typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : b.timestamp.getTime()
+          return timeA - timeB
+        })
+      setMessages(filtered)
+    }
 
-    setMessages(chatMessages)
-  }, [selectedChat, allMessages])
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
+  }, [selectedChat, user?.id])
 
   // Message search functionality
   useEffect(() => {
@@ -182,32 +233,47 @@ const Chat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedChat || !user) return
 
-    const message: ChatMessage = {
-      id: uuid(),
-      sender: user.name || 'You',
-      senderId: user.id,
-      message: newMessage,
-      timestamp: nowISO(),
-      isOwn: true,
-      read: false,
-    }
+    const messageText = newMessage.trim()
+    setNewMessage('') // Clear input immediately for better UX
 
     if (selectedChat.type === 'room') {
-      message.roomId = selectedChat.id
+      // Send to Firestore for room chat
+      try {
+        await sendFirestoreMessage(selectedChat.id, {
+          text: messageText,
+          senderName: user.name || user.email || 'Unknown',
+          userName: user.name || user.email || 'Unknown'
+        })
+        // Messages will update automatically via subscription
+      } catch (error) {
+        console.error('Error sending message:', error)
+        // Re-add message to input on error
+        setNewMessage(messageText)
+      }
     } else {
-      // Direct chat: set recipient to the other user
+      // Direct chat: still use localStorage for now (can be enhanced later)
       const chatId = selectedChat.id.split('-')
-      message.recipientId = chatId[0] === user.id ? chatId[1] : chatId[0]
-    }
+      const recipientId = chatId[0] === user.id ? chatId[1] : chatId[0]
+      
+      const message: ChatMessage = {
+        id: uuid(),
+        sender: user.name || 'You',
+        senderId: user.id,
+        message: messageText,
+        timestamp: nowISO(),
+        isOwn: true,
+        read: false,
+        recipientId
+      }
 
-    const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-    setJSON(CHAT_MESSAGES_KEY, [...allMessages, message])
-    setMessages([...messages, message])
-    setNewMessage('')
-    setRefreshKey(prev => prev + 1)
+      const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+      setJSON(CHAT_MESSAGES_KEY, [...allMessages, message])
+      setMessages([...messages, message])
+      setRefreshKey(prev => prev + 1)
+    }
   }
 
   const formatTime = (timestamp: string | Date) => {

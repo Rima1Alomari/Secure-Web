@@ -20,6 +20,20 @@ export default {
         '3xl': ['1.875rem', { lineHeight: '1.25' }],
         '4xl': ['2.25rem', { lineHeight: '1.2' }],
       },
+      colors: {
+        gray: {
+          50: '#f8f9fa',   // Softer off-white instead of pure white
+          100: '#f1f3f5',  // Softer light gray
+          200: '#e9ecef',  // Softer border color
+          300: '#dee2e6',  // Softer medium gray
+          400: '#ced4da',
+          500: '#adb5bd',
+          600: '#868e96',
+          700: '#495057',
+          800: '#343a40',
+          900: '#212529',
+        },
+      },
     },
   },
   plugins: [],

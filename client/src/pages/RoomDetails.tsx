@@ -90,6 +90,11 @@ const RoomDetails = () => {
     const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
     const roomMessages = allMessages
       .filter(msg => msg.roomId === id)
+      .map(msg => ({
+        ...msg,
+        // Ensure isOwn is correctly set based on current user
+        isOwn: msg.senderId === user?.id || msg.isOwn === true
+      }))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
     setMessages(roomMessages)
     
@@ -359,6 +364,20 @@ const RoomDetails = () => {
     setToast({ message: 'Room settings updated', type: 'success' })
   }
 
+  // Get initials from name (e.g., "Ahmed Alasmari" -> "AA", "Ali" -> "A")
+  const getInitials = (name: string): string => {
+    if (!name) return '?'
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      // First letter of first name + first letter of last name
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    } else if (parts.length === 1) {
+      // Single name - just first letter
+      return parts[0][0].toUpperCase()
+    }
+    return '?'
+  }
+
   const formatTime = (timestamp: string | Date) => {
     const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -470,56 +489,78 @@ const RoomDetails = () => {
           {/* Chat Tab */}
           {activeTab === 'chat' && (
             <div className="flex flex-col" style={{ height: 'calc(100vh - 400px)', minHeight: '400px' }}>
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
                     <FaUser className="text-4xl mb-3 opacity-50" />
                     <p>No messages yet. Start the conversation!</p>
                   </div>
                 ) : (
-                  messages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`flex gap-3 ${msg.isOwn ? 'flex-row-reverse' : ''}`}
-                    >
-                      <div className="flex-shrink-0 w-10 h-10 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
-                        <FaUser className="text-white text-sm" />
-                      </div>
-                      <div className={`flex-1 ${msg.isOwn ? 'text-right' : ''}`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-semibold text-gray-900 dark:text-white">{msg.sender}</span>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">{formatTime(msg.timestamp)}</span>
+                  messages.map((msg) => {
+                    // Check if message is from current user
+                    // Compare by senderId first, then fallback to sender name if senderId is missing
+                    const isOwn = user?.id ? (msg.senderId === user.id) : (msg.sender === user?.name || msg.isOwn === true)
+                    const initials = getInitials(msg.sender || 'User')
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      >
+                        {/* For other users: Avatar on the LEFT */}
+                        {!isOwn && (
+                          <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
+                            <span className="text-white text-xs font-semibold">{initials}</span>
+                          </div>
+                        )}
+                        
+                        {/* Message Container */}
+                        <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[70%]`}>
+                          {/* Sender name and time - show for all messages */}
+                          <div className={`flex items-center gap-2 mb-1 px-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
+                            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{msg.sender}</span>
+                            <span className="text-[10px] text-gray-500 dark:text-gray-500">{formatTime(msg.timestamp)}</span>
+                          </div>
+                          
+                          {/* Message Bubble */}
+                          <div
+                            className={`px-4 py-2.5 rounded-2xl ${
+                              isOwn
+                                ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white rounded-br-sm'
+                                : 'bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-sm border border-gray-200 dark:border-gray-600'
+                            } shadow-sm`}
+                          >
+                            <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
+                          </div>
                         </div>
-                        <div
-                          className={`inline-block px-5 py-3 rounded-xl shadow-lg ${
-                            msg.isOwn
-                              ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white'
-                              : 'bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 text-gray-900 dark:text-white'
-                          }`}
-                        >
-                          {msg.message}
-                        </div>
+                        
+                        {/* For own messages: Avatar on the RIGHT */}
+                        {isOwn && (
+                          <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
+                            <span className="text-white text-xs font-semibold">{initials}</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
                 <div ref={messagesEndRef} />
               </div>
-              <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-                <div className="flex gap-2">
+              <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                <div className="flex gap-2 items-center">
                   <input
                     type="text"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder="Type a message..."
-                    className="flex-1 px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                   />
                   <button
                     onClick={handleSendMessage}
-                    className="btn-primary px-6"
+                    className="flex-shrink-0 w-10 h-10 bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white rounded-full flex items-center justify-center transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!newMessage.trim()}
                   >
-                    <FaPaperPlane />
+                    <FaPaperPlane className="text-sm" />
                   </button>
                 </div>
               </div>

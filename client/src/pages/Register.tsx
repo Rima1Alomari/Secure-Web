@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { setToken } from '../utils/auth'
 import { useUser, UserRole } from '../contexts/UserContext'
-import { FaShieldAlt, FaUser, FaEnvelope, FaLock, FaUserPlus, FaArrowRight, FaEye, FaEyeSlash, FaUserShield, FaCog } from 'react-icons/fa'
+import { FaShieldAlt, FaUser, FaEnvelope, FaLock, FaUserPlus, FaArrowRight, FaEye, FaEyeSlash, FaCog } from 'react-icons/fa'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -65,9 +65,6 @@ const Register = () => {
         switch (userRole) {
           case 'admin':
             redirectPath = '/administration'
-            break
-          case 'security':
-            redirectPath = '/security'
             break
           case 'user':
           default:
@@ -212,7 +209,7 @@ const Register = () => {
               <label htmlFor="role" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                 Account Type / Role
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setRole('user')}
@@ -224,18 +221,6 @@ const Register = () => {
                 >
                   <FaUser className="text-2xl" />
                   <span className="text-sm font-medium">User</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('security')}
-                  className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${
-                    role === 'security'
-                      ? 'border-slate-500 bg-slate-50 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300'
-                      : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:border-slate-400 dark:hover:border-slate-500'
-                  }`}
-                >
-                  <FaShieldAlt className="text-2xl" />
-                  <span className="text-sm font-medium">Security</span>
                 </button>
                 <button
                   type="button"

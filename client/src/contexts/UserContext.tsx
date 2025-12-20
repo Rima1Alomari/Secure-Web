@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react'
+import { saveUser, updateUserPresence } from '../services/firestore'
 
 export type UserRole = 'user' | 'admin'
 
@@ -38,14 +39,49 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return null
   })
 
-  const setUser = (newUser: User | null) => {
+  const setUser = async (newUser: User | null) => {
     setUserState(newUser)
     if (newUser) {
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(newUser))
+      
+      // Save user to Firestore for real-time sync
+      try {
+        await saveUser({
+          id: newUser.id,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          isOnline: true
+        })
+        
+        // Update presence
+        await updateUserPresence(newUser.id, true)
+      } catch (error) {
+        console.error('Error saving user to Firestore:', error)
+        // Continue even if Firestore save fails
+      }
     } else {
       localStorage.removeItem(USER_STORAGE_KEY)
+      
+      // Mark user as offline in Firestore
+      if (user?.id) {
+        try {
+          await updateUserPresence(user.id, false)
+        } catch (error) {
+          console.error('Error updating user presence:', error)
+        }
+      }
     }
   }
+
+  // Update presence when component unmounts
+  useEffect(() => {
+    return () => {
+      if (user?.id) {
+        updateUserPresence(user.id, false).catch(console.error)
+      }
+    }
+  }, [user?.id])
 
   const role = user?.role || DEFAULT_ROLE
 

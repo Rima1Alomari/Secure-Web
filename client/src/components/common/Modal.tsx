@@ -34,7 +34,7 @@ export default function Modal({
       onClick={onClose}
     >
       <div
-        className={`bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] flex flex-col border-2 border-gray-200 dark:border-gray-700 animate-fade-in`}
+        className={`bg-gray-50 dark:bg-gray-800 rounded-2xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] flex flex-col border-2 border-gray-200 dark:border-gray-700 animate-fade-in`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

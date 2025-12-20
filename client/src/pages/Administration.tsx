@@ -6,6 +6,7 @@ import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ADMIN_USERS_KEY, SECURITY_LOGS_KEY, FILES_KEY, SECURITY_SETTINGS_KEY, EVENTS_KEY } from '../data/keys'
 import { AdminUserMock, SecurityLog } from '../types/models'
+import { subscribeToUsers, saveUser, deleteUser } from '../services/firestore'
 
 const Administration = () => {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -99,30 +100,51 @@ const Administration = () => {
     setToast({ message: 'Logo removed', type: 'info' })
   }
 
-  // Load users from localStorage
+  // Load users from Firestore in real-time
   useEffect(() => {
-    const savedUsers = getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
-    if (savedUsers.length === 0) {
-      // Initialize with default users (Ahmed, Ali, Mohammed)
-      const defaultUsers: AdminUserMock[] = [
-        { id: uuid(), name: 'Ahmed', email: 'ahmed@example.com', role: 'Admin', status: 'Active', createdAt: nowISO(), userId: '#AD001' },
-        { id: uuid(), name: 'Ali', email: 'ali@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US001' },
-        { id: uuid(), name: 'Mohammed', email: 'mohammed@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US002' },
-      ]
-      setUsers(defaultUsers)
-      setJSON(ADMIN_USERS_KEY, defaultUsers)
-    } else {
-      setUsers(savedUsers)
-    }
-    setIsLoading(false)
-  }, [])
+    setIsLoading(true)
+    
+    // Subscribe to users from Firestore
+    const unsubscribe = subscribeToUsers((firestoreUsers) => {
+      // Map Firestore users to AdminUserMock format
+      const mappedUsers: AdminUserMock[] = firestoreUsers.map((user: any) => ({
+        id: user.id,
+        name: user.name || user.email || 'Unknown',
+        email: user.email || '',
+        role: user.role === 'admin' ? 'Admin' : 'User',
+        status: user.isOnline ? 'Active' : (user.status || 'Active'),
+        createdAt: user.createdAt || user.createdAt?.toISOString() || nowISO(),
+        userId: user.id,
+        isOnline: user.isOnline || false
+      }))
+      
+      // If no users in Firestore, initialize with defaults
+      if (mappedUsers.length === 0) {
+        const defaultUsers: AdminUserMock[] = [
+          { id: uuid(), name: 'Ahmed', email: 'ahmed@example.com', role: 'Admin', status: 'Active', createdAt: nowISO(), userId: '#AD001' },
+          { id: uuid(), name: 'Ali', email: 'ali@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US001' },
+          { id: uuid(), name: 'Mohammed', email: 'mohammed@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US002' },
+        ]
+        // Save defaults to Firestore
+        defaultUsers.forEach(user => {
+          saveUser({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role.toLowerCase(),
+            isOnline: false
+          }).catch(console.error)
+        })
+        setUsers(defaultUsers)
+      } else {
+        setUsers(mappedUsers)
+      }
+      
+      setIsLoading(false)
+    })
 
-  // Save users to localStorage whenever they change
-  useEffect(() => {
-    if (users.length > 0) {
-      setJSON(ADMIN_USERS_KEY, users)
-    }
-  }, [users])
+    return () => unsubscribe()
+  }, [])
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<keyof AdminUserMock | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -168,25 +190,34 @@ const Administration = () => {
     return filteredAndSortedUsers.slice(startIndex, startIndex + itemsPerPage)
   }, [filteredAndSortedUsers, currentPage])
 
-  const handleAddUser = () => {
+  const handleAddUser = async () => {
     if (!newUser.name.trim() || !newUser.email.trim()) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
     }
 
-    const user: AdminUserMock = {
-      id: uuid(),
-      name: newUser.name,
-      email: newUser.email,
-      role: newUser.role,
-      status: newUser.status,
-      createdAt: nowISO()
-    }
+    try {
+      const userId = uuid()
+      const userData = {
+        id: userId,
+        name: newUser.name.trim(),
+        email: newUser.email.trim(),
+        role: newUser.role.toLowerCase(),
+        isOnline: false,
+        status: newUser.status.toLowerCase()
+      }
 
-    setUsers(prev => [...prev, user])
-    setToast({ message: `User "${user.name}" added successfully`, type: 'success' })
-    setShowAddUserModal(false)
-    setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+      // Save to Firestore
+      await saveUser(userData)
+      
+      setToast({ message: `User "${newUser.name}" added successfully`, type: 'success' })
+      setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+      setShowAddUserModal(false)
+      // Users will update automatically via subscription
+    } catch (error) {
+      console.error('Error adding user:', error)
+      setToast({ message: 'Failed to add user. Please try again.', type: 'error' })
+    }
   }
 
   const handleEditUser = (user: AdminUserMock) => {
@@ -200,27 +231,45 @@ const Administration = () => {
     setShowEditUserModal(true)
   }
 
-  const handleUpdateUser = () => {
+  const handleUpdateUser = async () => {
     if (!editingUser || !newUser.name.trim() || !newUser.email.trim()) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
     }
 
-    setUsers(prev => prev.map(u => 
-      u.id === editingUser.id 
-        ? { ...u, name: newUser.name, email: newUser.email, role: newUser.role, status: newUser.status }
-        : u
-    ))
-    setToast({ message: `User "${newUser.name}" updated successfully`, type: 'success' })
-    setShowEditUserModal(false)
-    setEditingUser(null)
-    setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+    try {
+      const userData = {
+        id: editingUser.id,
+        name: newUser.name.trim(),
+        email: newUser.email.trim(),
+        role: newUser.role.toLowerCase(),
+        status: newUser.status.toLowerCase()
+      }
+
+      // Update in Firestore
+      await saveUser(userData)
+      
+      setToast({ message: `User "${newUser.name}" updated successfully`, type: 'success' })
+      setShowEditUserModal(false)
+      setEditingUser(null)
+      setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+      // Users will update automatically via subscription
+    } catch (error) {
+      console.error('Error updating user:', error)
+      setToast({ message: 'Failed to update user. Please try again.', type: 'error' })
+    }
   }
 
-  const handleDeleteUser = (user: AdminUserMock) => {
+  const handleDeleteUser = async (user: AdminUserMock) => {
     if (window.confirm(`Are you sure you want to delete "${user.name}"?`)) {
-      setUsers(prev => prev.filter(u => u.id !== user.id))
-      setToast({ message: `User "${user.name}" deleted`, type: 'info' })
+      try {
+        await deleteUser(user.id)
+        setToast({ message: `User "${user.name}" deleted`, type: 'info' })
+        // Users will update automatically via subscription
+      } catch (error) {
+        console.error('Error deleting user:', error)
+        setToast({ message: 'Failed to delete user. Please try again.', type: 'error' })
+      }
     }
   }
 

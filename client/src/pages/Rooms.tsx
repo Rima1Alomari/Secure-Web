@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FaPlus, FaUsers, FaLock, FaUnlock, FaClock, FaEllipsisV, FaInfo, FaEdit, FaTrash, FaSearch, FaTimes, FaUserPlus } from 'react-icons/fa'
+import { FaPlus, FaUsers, FaClock, FaEllipsisV, FaInfo, FaEdit, FaTrash, FaSearch, FaTimes, FaUserPlus } from 'react-icons/fa'
 import { Modal, ConfirmDialog, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ROOMS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
@@ -15,7 +15,7 @@ const Rooms = () => {
   const { role, user } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [newRoom, setNewRoom] = useState({ name: '', description: '' })
+  const [newRoom, setNewRoom] = useState<{ name: string; description: string; isPrivate: boolean }>({ name: '', description: '', isPrivate: false })
   const [roomClassification, setRoomClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
   const [inviteSearchQuery, setInviteSearchQuery] = useState('')
   const [invitedUserIds, setInvitedUserIds] = useState<string[]>([])
@@ -68,7 +68,7 @@ const Rooms = () => {
     const fetchUsers = async () => {
       try {
         const token = getToken() || 'mock-token-for-testing'
-        const API_URL = import.meta.env.VITE_API_URL || '/api'
+        const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
         
         // Try to fetch real users from API
         const response = await axios.get(`${API_URL}/auth/users`, {
@@ -148,10 +148,11 @@ const Rooms = () => {
       const lastMessage = roomMessages[0]
       const unreadCount = roomMessages.filter(msg => !msg.isOwn && msg.read !== true).length
       
+      const lastMessageTime = lastMessage?.timestamp || room.updatedAt
       return {
         ...room,
         lastMessage: lastMessage?.message || 'No messages yet',
-        lastMessageTime: lastMessage?.timestamp || room.updatedAt,
+        lastMessageTime: typeof lastMessageTime === 'string' ? lastMessageTime : (lastMessageTime instanceof Date ? lastMessageTime.toISOString() : room.updatedAt),
         unreadCount: unreadCount || 0,
       }
     }).sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime())
@@ -379,8 +380,8 @@ const Rooms = () => {
       .slice(0, 10)
   }, [allUsers, addMemberSearchQuery, selectedRoom])
 
-  const formatTimeAgo = (timestamp: string) => {
-    const date = new Date(timestamp)
+  const formatTimeAgo = (timestamp: string | Date) => {
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
     const now = new Date()
     const diffMs = now.getTime() - date.getTime()
     const diffMins = Math.floor(diffMs / 60000)
@@ -459,7 +460,7 @@ const Rooms = () => {
                 key={room.id}
                 className={`relative text-left card-hover p-6 transition-all duration-200 ${
                   room.unreadCount && room.unreadCount > 0
-                    ? 'border-blue-500 dark:border-blue-400 shadow-lg shadow-blue-500/10 ring-2 ring-blue-500/20'
+                    ? 'border-blue-300 dark:border-blue-400 shadow-lg shadow-blue-500/10 ring-2 ring-blue-500/20'
                     : ''
                 }`}
               >
@@ -491,7 +492,7 @@ const Rooms = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <FaClock />
-                      <span>{formatTimeAgo(room.lastMessageTime || room.updatedAt)}</span>
+                      <span>{formatTimeAgo(typeof (room.lastMessageTime || room.updatedAt) === 'string' ? (room.lastMessageTime || room.updatedAt) : new Date(room.lastMessageTime || room.updatedAt).toISOString())}</span>
                     </div>
                   </div>
                 </button>
@@ -845,7 +846,7 @@ const Rooms = () => {
           isOpen={showCreateModal}
           onClose={() => {
             setShowCreateModal(false)
-            setNewRoom({ name: '', description: '' })
+            setNewRoom({ name: '', description: '', isPrivate: false })
             setRoomClassification('Normal')
             setInviteSearchQuery('')
             setInvitedUserIds([])
@@ -994,7 +995,7 @@ const Rooms = () => {
               <button
                 onClick={() => {
                   setShowCreateModal(false)
-                  setNewRoom({ name: '', description: '' })
+                  setNewRoom({ name: '', description: '', isPrivate: false })
                   setRoomClassification('Normal')
                   setInviteSearchQuery('')
                   setInvitedUserIds([])
