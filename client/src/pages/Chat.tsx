@@ -1,15 +1,21 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus, FaTimes } from 'react-icons/fa'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { CHAT_MESSAGES_KEY } from '../data/keys'
-import { Room, ChatMessage, DirectChat } from '../types/models'
+import { CHAT_MESSAGES_KEY, ROOMS_KEY, ADMIN_USERS_KEY } from '../data/keys'
+import { Room, ChatMessage, DirectChat, AdminUserMock } from '../types/models'
 import { useUser } from '../contexts/UserContext'
+import axios from 'axios'
+import { getToken } from '../utils/auth'
 import { 
   subscribeToRooms, 
   subscribeToMessages, 
   sendMessage as sendFirestoreMessage,
+  sendDirectMessage,
+  subscribeToDirectMessages,
   subscribeToUsers,
-  markMessageAsRead
+  markMessageAsRead,
+  createNotification
 } from '../services/firestore'
 import { useRealtimeUsers } from '../hooks/useRealtimeUsers'
 
@@ -18,11 +24,26 @@ type SelectedChat = { type: ChatType; id: string; name: string } | null
 
 const Chat = () => {
   const { user } = useUser()
+  const location = useLocation()
   const [selectedChat, setSelectedChat] = useState<SelectedChat>(null)
+  
+  // Handle navigation from search
+  useEffect(() => {
+    if (location.state?.selectChat) {
+      const chatData = location.state.selectChat
+      setSelectedChat({
+        type: chatData.type,
+        id: chatData.id,
+        name: chatData.name
+      })
+      // Clear the state to avoid re-selecting on re-render
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [, setRefreshKey] = useState(0)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [dmSearchQuery, setDmSearchQuery] = useState('')
   const [messageSearchQuery, setMessageSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ChatMessage[]>([])
@@ -31,10 +52,20 @@ const Chat = () => {
   const [allUsers, setAllUsers] = useState<any[]>([])
   const { users: realtimeUsers } = useRealtimeUsers()
 
-  // Subscribe to rooms in real-time
+  // Subscribe to rooms in real-time with localStorage fallback
   useEffect(() => {
     if (!user?.id) return
 
+    // First, load from localStorage as fallback
+    const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
+    const filteredLocalRooms = allRooms.filter((room: Room) => {
+      if (room.ownerId === user.id) return true
+      if (room.memberIds && room.memberIds.includes(user.id)) return true
+      return false
+    })
+    setRooms(filteredLocalRooms)
+
+    // Then subscribe to Firestore for real-time updates
     const unsubscribe = subscribeToRooms((firestoreRooms) => {
       // Filter rooms: user must be owner OR member
       const filteredRooms = firestoreRooms.filter((room: any) => {
@@ -42,28 +73,116 @@ const Chat = () => {
         if (room.memberIds && room.memberIds.includes(user.id)) return true
         return false
       })
-      setRooms(filteredRooms)
+      // Only update if we have rooms from Firestore, otherwise keep localStorage rooms
+      if (filteredRooms.length > 0) {
+        setRooms(filteredRooms)
+      }
     })
 
     return () => unsubscribe()
   }, [user?.id])
 
-  // Subscribe to all users in real-time
+  // Subscribe to all users in real-time with fallback
   useEffect(() => {
-    const unsubscribe = subscribeToUsers((firestoreUsers) => {
-      setAllUsers(firestoreUsers)
-    })
-
-    return () => unsubscribe()
+    // First, load from localStorage/API as fallback
+    const fetchUsers = async () => {
+      try {
+        const token = getToken() || 'mock-token-for-testing'
+        const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+        
+        // Try to fetch real users from API
+        try {
+          const response = await axios.get(`${API_URL}/auth/users`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+          
+          if (response.data && response.data.length > 0) {
+            // Map API users to format
+            const mappedUsers = response.data.map((u: any) => ({
+              id: u.id || u._id,
+              userId: u.userId,
+              name: u.name,
+              email: u.email,
+              role: u.role === 'admin' ? 'Admin' : 'User',
+              status: 'Active',
+              createdAt: new Date().toISOString()
+            }))
+            setAllUsers(mappedUsers)
+            // Also save to localStorage
+            setJSON(ADMIN_USERS_KEY, mappedUsers)
+            return
+          }
+        } catch (apiError) {
+          console.warn('API fetch failed, trying localStorage:', apiError)
+        }
+        
+        // Fallback to localStorage
+        const localUsers = getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+        if (localUsers.length > 0) {
+          setAllUsers(localUsers)
+        }
+      } catch (error) {
+        console.error('Error fetching users:', error)
+      }
+    }
+    
+    fetchUsers()
+    
+    // Then subscribe to Firestore for real-time updates
+    try {
+      const unsubscribe = subscribeToUsers((firestoreUsers) => {
+        if (firestoreUsers && firestoreUsers.length > 0) {
+          // Map Firestore users to format
+          const mappedUsers = firestoreUsers.map((u: any) => ({
+            id: u.id,
+            userId: u.userId || u.id,
+            name: u.name || u.email,
+            email: u.email,
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: u.isOnline ? 'Active' : (u.status || 'Active'),
+            createdAt: u.createdAt || new Date().toISOString()
+          }))
+          setAllUsers(mappedUsers)
+          // Also save to localStorage
+          setJSON(ADMIN_USERS_KEY, mappedUsers)
+        }
+      })
+      
+      return () => unsubscribe()
+    } catch (error) {
+      console.error('Error subscribing to Firestore users:', error)
+      // Continue with localStorage/API users only
+    }
   }, [])
 
-  // Use realtime users if available, otherwise fallback to allUsers
-  const availableUsers = realtimeUsers.length > 0 ? realtimeUsers : allUsers
+  // Merge users from both sources (realtime and local), deduplicate by id
+  const availableUsers = useMemo(() => {
+    const userMap = new Map<string, any>()
+    
+    // First add allUsers (from API/localStorage)
+    allUsers.forEach((u: any) => {
+      if (u.id) {
+        userMap.set(u.id, u)
+      }
+    })
+    
+    // Then add/update with realtimeUsers (from Firestore)
+    realtimeUsers.forEach((u: any) => {
+      if (u.id) {
+        userMap.set(u.id, u)
+      }
+    })
+    
+    return Array.from(userMap.values())
+  }, [realtimeUsers, allUsers])
 
-  // Get all messages - now handled by real-time subscription per room
+  // Get all messages from localStorage for computing direct chats
+  // This includes all messages, not just the selected chat
   const allMessages: ChatMessage[] = useMemo(() => {
-    return messages // Messages are now loaded per chat via subscription
-  }, [messages])
+    // Load all messages from localStorage to compute direct chats
+    const storedMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+    return storedMessages
+  }, [refreshKey])
 
   // Get direct chats (simple implementation)
   const directChats = useMemo(() => {
@@ -76,7 +195,10 @@ const Chat = () => {
       if (!msg.roomId && msg.recipientId && msg.senderId) {
         // Determine the other user
         const otherUserId = msg.senderId === user.id ? msg.recipientId : msg.senderId
-        const otherUserName = msg.senderId === user.id ? msg.recipientId : msg.sender
+        
+        // Get the other user's name from availableUsers
+        const otherUser = availableUsers.find((u: any) => u.id === otherUserId)
+        const otherUserName = otherUser?.name || otherUser?.email || msg.sender || otherUserId
         
         // Create chat ID (sorted user IDs)
         const chatId = [user.id, otherUserId].sort().join('-')
@@ -107,7 +229,7 @@ const Chat = () => {
     return Array.from(chatMap.values()).sort((a, b) => 
       new Date(b.lastMessageTime || '').getTime() - new Date(a.lastMessageTime || '').getTime()
     )
-  }, [allMessages, user?.id])
+  }, [allMessages, user?.id, availableUsers])
 
   // Filter direct chats by search query
   const filteredDirectChats = useMemo(() => {
@@ -120,9 +242,14 @@ const Chat = () => {
     )
   }, [directChats, dmSearchQuery])
 
-  // Get filtered users for "Start chat" - show all users when no search, or filtered when searching
+  // Get filtered users for "Start chat" - ONLY show when searching
   const filteredUsersForChat = useMemo(() => {
     const query = dmSearchQuery.toLowerCase().trim()
+    
+    // Only show users when there's a search query
+    if (!query) {
+      return []
+    }
     
     // Get users who don't have existing direct chats
     const existingChatUserIds = new Set(directChats.map(chat => chat.userId))
@@ -130,19 +257,14 @@ const Chat = () => {
       u.id !== user?.id && !existingChatUserIds.has(u.id)
     )
     
-    // If searching, filter by query; otherwise show all available users
-    if (query) {
-      return usersToShow
-        .filter((u: any) => {
-          const name = (u.name || u.email || '').toLowerCase()
-          const email = (u.email || '').toLowerCase()
-          return name.includes(query) || email.includes(query)
-        })
-        .slice(0, 10)
-    } else {
-      // Show all available users (limit to 20 for performance)
-      return usersToShow.slice(0, 20)
-    }
+    // Filter by query
+    return usersToShow
+      .filter((u: any) => {
+        const name = (u.name || u.email || '').toLowerCase()
+        const email = (u.email || '').toLowerCase()
+        return name.includes(query) || email.includes(query)
+      })
+      .slice(0, 10)
   }, [availableUsers, dmSearchQuery, directChats, user?.id])
 
   const handleStartChat = (targetUserId: string, targetUserName: string) => {
@@ -186,24 +308,68 @@ const Chat = () => {
         setMessages(formattedMessages)
       })
     } else {
-      // For direct messages, we need to handle differently
-      // For now, fallback to localStorage approach but could be enhanced
+      // For direct messages, subscribe to Firestore for real-time updates
       const chatId = selectedChat.id.split('-')
-      const chatMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-      const filtered = chatMessages
-        .filter(msg => {
-          return (
-            !msg.roomId &&
-            ((msg.senderId === chatId[0] && msg.recipientId === chatId[1]) ||
-             (msg.senderId === chatId[1] && msg.recipientId === chatId[0]))
-          )
+      const userId1 = chatId[0]
+      const userId2 = chatId[1]
+      
+      try {
+        unsubscribe = subscribeToDirectMessages(userId1, userId2, (firestoreMessages) => {
+          const formattedMessages: ChatMessage[] = firestoreMessages.map((msg: any) => ({
+            id: msg.id,
+            sender: msg.senderName || msg.userName || 'Unknown',
+            senderId: msg.userId || msg.senderId,
+            message: msg.text || msg.content || msg.message || '',
+            timestamp: msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp),
+            isOwn: (msg.userId || msg.senderId) === user.id,
+            read: msg.readBy?.includes(user.id) || false,
+            recipientId: msg.recipientId
+          }))
+          
+          // Sync to localStorage for direct chats list
+          const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+          const messageMap = new Map(allMessages.map(m => [m.id, m]))
+          formattedMessages.forEach(msg => {
+            if (!messageMap.has(msg.id)) {
+              messageMap.set(msg.id, msg)
+            }
+          })
+          setJSON(CHAT_MESSAGES_KEY, Array.from(messageMap.values()))
+          setRefreshKey(prev => prev + 1)
+          
+          // Mark messages as read
+          formattedMessages.forEach(msg => {
+            if (!msg.isOwn && !msg.read) {
+              markMessageAsRead(msg.id, user.id).catch(console.error)
+            }
+          })
+          
+          setMessages(formattedMessages)
         })
-        .sort((a, b) => {
-          const timeA = typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : a.timestamp.getTime()
-          const timeB = typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : b.timestamp.getTime()
-          return timeA - timeB
-        })
-      setMessages(filtered)
+      } catch (error) {
+        console.error('Error subscribing to direct messages, falling back to localStorage:', error)
+        // Fallback to localStorage
+        const chatMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+        const filtered = chatMessages
+          .filter(msg => {
+            return (
+              !msg.roomId &&
+              ((msg.senderId === userId1 && msg.recipientId === userId2) ||
+               (msg.senderId === userId2 && msg.recipientId === userId1))
+            )
+          })
+          .map(msg => ({
+            ...msg,
+            // Ensure isOwn is correctly set based on current user
+            isOwn: user?.id ? (msg.senderId === user.id || msg.isOwn === true) : (msg.isOwn === true)
+          }))
+          .sort((a, b) => {
+            const timeA = typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : a.timestamp.getTime()
+            const timeB = typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : b.timestamp.getTime()
+            return timeA - timeB
+          })
+        setMessages(filtered)
+      }
     }
 
     return () => {
@@ -247,6 +413,27 @@ const Chat = () => {
           senderName: user.name || user.email || 'Unknown',
           userName: user.name || user.email || 'Unknown'
         })
+        
+        // Create notifications for all room members except sender
+        try {
+          const room = rooms.find(r => r.id === selectedChat.id)
+          if (room) {
+            const memberIds = room.memberIds || []
+            const recipientIds = memberIds.filter(id => id !== user.id)
+            
+            await Promise.all(recipientIds.map(recipientId => 
+              createNotification({
+                userId: recipientId,
+                message: `${user.name || user.email} sent a message in ${room.name}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`,
+                type: 'message',
+                link: `/rooms/${selectedChat.id}`
+              }).catch(err => console.error('Error creating notification:', err))
+            ))
+          }
+        } catch (error) {
+          console.error('Error creating room notifications:', error)
+        }
+        
         // Messages will update automatically via subscription
       } catch (error) {
         console.error('Error sending message:', error)
@@ -254,26 +441,83 @@ const Chat = () => {
         setNewMessage(messageText)
       }
     } else {
-      // Direct chat: still use localStorage for now (can be enhanced later)
+      // Direct chat: use Firestore for real-time sync
       const chatId = selectedChat.id.split('-')
       const recipientId = chatId[0] === user.id ? chatId[1] : chatId[0]
       
-      const message: ChatMessage = {
-        id: uuid(),
-        sender: user.name || 'You',
-        senderId: user.id,
-        message: messageText,
-        timestamp: nowISO(),
-        isOwn: true,
-        read: false,
-        recipientId
-      }
+      try {
+        // Send to Firestore for real-time sync
+        await sendDirectMessage(user.id, recipientId, {
+          text: messageText,
+          senderName: user.name || user.email || 'Unknown',
+          userName: user.name || user.email || 'Unknown',
+          message: messageText
+        })
+        
+        // Create notification for recipient
+        try {
+          await createNotification({
+            userId: recipientId,
+            message: `${user.name || user.email} sent you a message: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`,
+            type: 'message',
+            link: `/chat`
+          })
+        } catch (error) {
+          console.error('Error creating notification:', error)
+          // Continue even if notification fails
+        }
+        
+        // Messages will update automatically via subscription
+      } catch (error) {
+        console.error('Error sending direct message to Firestore, falling back to localStorage:', error)
+        
+        // Fallback to localStorage
+        const message: ChatMessage = {
+          id: uuid(),
+          sender: user.name || 'You',
+          senderId: user.id,
+          message: messageText,
+          timestamp: nowISO(),
+          isOwn: true,
+          read: false,
+          recipientId
+        }
 
-      const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-      setJSON(CHAT_MESSAGES_KEY, [...allMessages, message])
-      setMessages([...messages, message])
-      setRefreshKey(prev => prev + 1)
+        const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+        const updatedMessages = [...allMessages, message]
+        setJSON(CHAT_MESSAGES_KEY, updatedMessages)
+        
+        // Update local messages state
+        setMessages(prev => [...prev, message])
+        setRefreshKey(prev => prev + 1)
+        
+        // Scroll to bottom after message is added
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
+      }
     }
+  }
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages])
+
+  // Get initials from name (e.g., "Ahmed Alasmari" -> "AA", "Ali" -> "A")
+  const getInitials = (name: string): string => {
+    if (!name) return '?'
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      // First letter of first name + first letter of last name
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    } else if (parts.length === 1) {
+      // Single name - just first letter
+      return parts[0][0].toUpperCase()
+    }
+    return '?'
   }
 
   const formatTime = (timestamp: string | Date) => {
@@ -483,9 +727,13 @@ const Chat = () => {
                       </button>
                     ))}
                   </>
-                ) : filteredDirectChats.length === 0 ? (
+                ) : filteredDirectChats.length === 0 && dmSearchQuery.trim() ? (
                   <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
-                    {dmSearchQuery.trim() ? 'No users found' : 'No users available'}
+                    No users found
+                  </p>
+                ) : filteredDirectChats.length === 0 && !dmSearchQuery.trim() ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
+                    Search for users to start a chat
                   </p>
                 ) : null}
               </div>
@@ -555,40 +803,62 @@ const Chat = () => {
                         msg.sender.toLowerCase().includes(messageSearchQuery.toLowerCase())
                       )
                       
+                      // Ensure isOwn is correctly set based on current user
+                      const isOwn = user?.id ? (msg.senderId === user.id || msg.isOwn === true) : (msg.isOwn === true)
+                      const initials = getInitials(msg.sender || 'User')
+                      
                       return (
                         <div
                           key={msg.id}
-                          className={`flex gap-3 ${msg.isOwn ? 'flex-row-reverse' : ''} ${
+                          className={`flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'} ${
                             isSearchMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-2 -m-2' : ''
                           }`}
                         >
-                          <div className="flex-shrink-0 w-10 h-10 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
-                            <FaUser className="text-white text-sm" />
-                          </div>
-                          <div className={`flex-1 ${msg.isOwn ? 'text-right' : ''}`}>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-semibold text-gray-900 dark:text-white">{msg.sender}</span>
-                              <span className="text-xs text-gray-500 dark:text-gray-400">{formatTime(msg.timestamp)}</span>
+                          {/* For other users: Avatar on the LEFT */}
+                          {!isOwn && (
+                            <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
+                              <span className="text-white text-xs font-semibold">{initials}</span>
                             </div>
+                          )}
+                          
+                          {/* Message Container */}
+                          <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[70%]`}>
+                            {/* Sender name and time - show for all messages */}
+                            <div className={`flex items-center gap-2 mb-1 px-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
+                              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{msg.sender}</span>
+                              <span className="text-[10px] text-gray-500 dark:text-gray-500">{formatTime(msg.timestamp)}</span>
+                            </div>
+                            
+                            {/* Message Bubble */}
                             <div
-                              className={`inline-block px-5 py-3 rounded-xl shadow-lg ${
-                                msg.isOwn
-                                  ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white'
-                                  : 'bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 text-gray-900 dark:text-white'
-                              }`}
+                              className={`px-4 py-2.5 rounded-2xl ${
+                                isOwn
+                                  ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white rounded-br-sm'
+                                  : 'bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-sm border border-gray-200 dark:border-gray-600'
+                              } shadow-sm`}
                             >
                               {messageSearchQuery.trim() ? (
-                                <span dangerouslySetInnerHTML={{
-                                  __html: msg.message.replace(
-                                    new RegExp(`(${messageSearchQuery})`, 'gi'),
-                                    '<mark class="bg-yellow-300 dark:bg-yellow-600">$1</mark>'
-                                  )
-                                }} />
+                                <span 
+                                  className="text-sm whitespace-pre-wrap break-words"
+                                  dangerouslySetInnerHTML={{
+                                    __html: msg.message.replace(
+                                      new RegExp(`(${messageSearchQuery})`, 'gi'),
+                                      '<mark class="bg-yellow-300 dark:bg-yellow-600">$1</mark>'
+                                    )
+                                  }} 
+                                />
                               ) : (
-                                msg.message
+                                <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
                               )}
                             </div>
                           </div>
+                          
+                          {/* For own messages: Avatar on the RIGHT */}
+                          {isOwn && (
+                            <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
+                              <span className="text-white text-xs font-semibold">{initials}</span>
+                            </div>
+                          )}
                         </div>
                       )
                     })
@@ -603,7 +873,12 @@ const Chat = () => {
                       type="text"
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
                       placeholder="Type a message..."
                       className="flex-1 px-5 py-3.5 bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm shadow-sm"
                     />

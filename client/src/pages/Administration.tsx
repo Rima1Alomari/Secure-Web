@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FaUsers, FaCog, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle, FaUpload, FaTimes } from 'react-icons/fa'
 import TableSkeleton from '../components/TableSkeleton'
@@ -25,6 +25,7 @@ const Administration = () => {
   const [activeTab, setActiveTab] = useState<'teams' | 'settings'>('teams')
   const [backendConnected] = useState(false) // Demo mode
   const [selectedRowMenu, setSelectedRowMenu] = useState<string | null>(null)
+  const actionMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const [users, setUsers] = useState<AdminUserMock[]>([])
   const [showAddUserModal, setShowAddUserModal] = useState(false)
   const [showEditUserModal, setShowEditUserModal] = useState(false)
@@ -312,27 +313,6 @@ const Administration = () => {
         </div>
 
         {/* System Status Strip */}
-        <div className={`mb-6 p-3 rounded-lg flex items-center gap-3 ${
-          backendConnected 
-            ? 'bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800' 
-            : 'bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-200 dark:border-yellow-800'
-        }`}>
-          <FaExclamationTriangle className={`text-lg ${
-            backendConnected ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'
-          }`} />
-          <div className="flex-1">
-            <p className={`text-sm font-semibold ${
-              backendConnected ? 'text-green-800 dark:text-green-300' : 'text-yellow-800 dark:text-yellow-300'
-            }`}>
-              {backendConnected ? 'Backend Connected' : 'Backend Disconnected / Demo Mode'}
-            </p>
-            <p className={`text-xs ${
-              backendConnected ? 'text-green-700 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-400'
-            }`}>
-              {backendConnected ? 'All systems operational' : 'Running in demo mode with mock data'}
-            </p>
-          </div>
-        </div>
 
         <div className="card">
           {/* Tabs */}
@@ -472,7 +452,12 @@ const Administration = () => {
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm relative">
-                            <div className="relative">
+                            <div 
+                              ref={(el) => {
+                                if (el) actionMenuRefs.current[user.id] = el
+                              }}
+                              className="relative"
+                            >
                               <button
                                 onClick={() => setSelectedRowMenu(selectedRowMenu === user.id ? null : user.id)}
                                 className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
@@ -485,7 +470,13 @@ const Administration = () => {
                                     className="fixed inset-0 z-10" 
                                     onClick={() => setSelectedRowMenu(null)}
                                   ></div>
-                                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-xl border-2 border-gray-200 dark:border-gray-700 z-20">
+                                  <div 
+                                    className="fixed bg-white dark:bg-gray-800 rounded-lg shadow-xl border-2 border-gray-200 dark:border-gray-700 z-20 w-48"
+                                    style={{
+                                      top: `${actionMenuRefs.current[user.id]?.getBoundingClientRect().bottom || 0}px`,
+                                      right: `${window.innerWidth - (actionMenuRefs.current[user.id]?.getBoundingClientRect().right || 0)}px`
+                                    }}
+                                  >
                                     <button
                                       onClick={() => {
                                         handleEditUser(user)
@@ -752,8 +743,6 @@ const Administration = () => {
               >
                 <option value="User">User</option>
                 <option value="Admin">Admin</option>
-                <option value="Moderator">Moderator</option>
-                <option value="Guest">Guest</option>
               </select>
             </div>
             <div>
@@ -838,8 +827,6 @@ const Administration = () => {
               >
                 <option value="User">User</option>
                 <option value="Admin">Admin</option>
-                <option value="Moderator">Moderator</option>
-                <option value="Guest">Guest</option>
               </select>
             </div>
             <div>

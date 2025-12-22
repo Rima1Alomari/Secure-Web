@@ -13,24 +13,37 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "your-app-id"
 }
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig)
+// Initialize Firebase with error handling
+let app
+let db
+let auth
 
-// Initialize Firestore
-export const db = getFirestore(app)
-
-// Initialize Auth (optional, if you want to use Firebase Auth)
-export const auth = getAuth(app)
+try {
+  app = initializeApp(firebaseConfig)
+  db = getFirestore(app)
+  auth = getAuth(app)
+} catch (error) {
+  console.error('Error initializing Firebase:', error)
+  // Create dummy objects to prevent import errors
+  app = {} as any
+  db = {} as any
+  auth = {} as any
+}
 
 // Connect to emulators in development (optional)
 if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
   try {
-    connectFirestoreEmulator(db, 'localhost', 8080)
-    connectAuthEmulator(auth, 'http://localhost:9099')
+    if (db && typeof db !== 'object' || (typeof db === 'object' && Object.keys(db).length > 0)) {
+      connectFirestoreEmulator(db, 'localhost', 8080)
+    }
+    if (auth && typeof auth !== 'object' || (typeof auth === 'object' && Object.keys(auth).length > 0)) {
+      connectAuthEmulator(auth, 'http://localhost:9099')
+    }
   } catch (error) {
     console.log('Firebase emulators already connected or not available')
   }
 }
 
+export { db, auth }
 export default app
 

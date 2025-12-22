@@ -1,69 +1,117 @@
 import { useState, useRef, useEffect } from 'react'
-import { FaBell, FaShieldAlt, FaVideo, FaClock, FaFile, FaCheck } from 'react-icons/fa'
+import { FaBell, FaShieldAlt, FaVideo, FaClock, FaFile, FaCheck, FaComments } from 'react-icons/fa'
+import { useUser } from '../contexts/UserContext'
+import { getJSON, setJSON } from '../data/storage'
+import { NOTIFICATIONS_KEY } from '../data/keys'
+import { subscribeToNotifications, createNotification, markNotificationAsRead as markNotificationRead } from '../services/firestore'
 
 interface Notification {
   id: string
   message: string
-  type: 'security' | 'room' | 'meeting' | 'file'
-  timestamp: string
+  type: 'security' | 'room' | 'meeting' | 'file' | 'message'
+  timestamp: string | Date
   read: boolean
+  userId?: string
+  link?: string
 }
-
-// Mock notifications
-const mockNotifications: Notification[] = [
-  {
-    id: '1',
-    message: 'Security scan completed',
-    type: 'security',
-    timestamp: '2 minutes ago',
-    read: false,
-  },
-  {
-    id: '2',
-    message: 'New room created: Development Team',
-    type: 'room',
-    timestamp: '15 minutes ago',
-    read: false,
-  },
-  {
-    id: '3',
-    message: 'Meeting reminder in 15 min',
-    type: 'meeting',
-    timestamp: '1 hour ago',
-    read: false,
-  },
-  {
-    id: '4',
-    message: 'File uploaded: Project_Report.pdf',
-    type: 'file',
-    timestamp: '3 hours ago',
-    read: false,
-  },
-]
 
 const typeConfig = {
   security: { icon: FaShieldAlt, color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
   room: { icon: FaVideo, color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-100 dark:bg-green-900/30' },
   meeting: { icon: FaClock, color: 'text-purple-600 dark:text-purple-400', bgColor: 'bg-purple-100 dark:bg-purple-900/30' },
   file: { icon: FaFile, color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-100 dark:bg-orange-900/30' },
+  message: { icon: FaComments, color: 'text-indigo-600 dark:text-indigo-400', bgColor: 'bg-indigo-100 dark:bg-indigo-900/30' },
 }
 
 export default function NotificationsCenter() {
+  const { user } = useUser()
   const [isOpen, setIsOpen] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications)
+  const [notifications, setNotifications] = useState<Notification[]>([])
   const notificationRef = useRef<HTMLDivElement>(null)
+
+  // Load notifications from localStorage and subscribe to Firestore
+  useEffect(() => {
+    if (!user?.id) return
+
+    // Load from localStorage as fallback
+    const localNotifications = getJSON<Notification[]>(NOTIFICATIONS_KEY, []) || []
+    const userNotifications = localNotifications.filter(n => !n.userId || n.userId === user.id)
+    setNotifications(userNotifications)
+
+    // Subscribe to real-time notifications from Firestore
+    try {
+      const unsubscribe = subscribeToNotifications(user.id, (firestoreNotifications) => {
+        const mappedNotifications: Notification[] = firestoreNotifications.map((n: any) => ({
+          id: n.id,
+          message: n.message,
+          type: n.type || 'message',
+          timestamp: n.timestamp instanceof Date ? n.timestamp : new Date(n.timestamp),
+          read: n.read || false,
+          userId: n.userId,
+          link: n.link
+        }))
+        setNotifications(mappedNotifications)
+        // Also save to localStorage
+        setJSON(NOTIFICATIONS_KEY, mappedNotifications)
+      })
+
+      return () => unsubscribe()
+    } catch (error) {
+      console.error('Error subscribing to notifications:', error)
+      // Continue with localStorage only
+    }
+  }, [user?.id])
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => !n.read).length
 
+  // Format timestamp
+  const formatTimestamp = (timestamp: string | Date): string => {
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+    return date.toLocaleDateString()
+  }
+
   // Mark all as read
-  const handleMarkAllAsRead = () => {
+  const handleMarkAllAsRead = async () => {
+    const unreadNotifications = notifications.filter(n => !n.read)
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    
+    // Update in Firestore
+    try {
+      await Promise.all(unreadNotifications.map(n => markNotificationRead(n.id)))
+    } catch (error) {
+      console.error('Error marking notifications as read:', error)
+    }
+    
+    // Update localStorage
+    const updated = notifications.map(n => ({ ...n, read: true }))
+    setJSON(NOTIFICATIONS_KEY, updated)
   }
 
   // Mark single notification as read
-  const handleMarkAsRead = (id: string) => {
+  const handleMarkAsRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+    
+    // Update in Firestore
+    try {
+      await markNotificationRead(id)
+    } catch (error) {
+      console.error('Error marking notification as read:', error)
+    }
+    
+    // Update localStorage
+    const updated = notifications.map(n => n.id === id ? { ...n, read: true } : n)
+    setJSON(NOTIFICATIONS_KEY, updated)
   }
 
   // Close dropdown when clicking outside
@@ -157,7 +205,7 @@ export default function NotificationsCenter() {
                             {notification.message}
                           </p>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            {notification.timestamp}
+                            {formatTimestamp(notification.timestamp)}
                           </p>
                         </div>
                         

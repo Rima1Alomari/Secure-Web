@@ -178,7 +178,7 @@ export default function Layout({ children, onLogout }: LayoutProps) {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors flex">
       {/* Left Sidebar */}
       <aside className={`hidden lg:flex flex-col bg-gray-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-sm sticky top-0 h-screen transition-all duration-300 ${
-        isSidebarCollapsed ? 'w-28' : 'w-64'
+        isSidebarCollapsed ? 'w-20' : 'w-64'
       }`}>
         {/* Logo Section */}
         <div className="p-4 border-b border-gray-300 dark:border-gray-700 flex items-center justify-center">
@@ -186,7 +186,7 @@ export default function Layout({ children, onLogout }: LayoutProps) {
             <img 
               src="/Saudi-Aramco.CloseTab.png" 
               alt="Aramco Logo" 
-              className="w-16 h-16 object-contain"
+              className="w-12 h-12 object-contain"
             />
           ) : (
             <img 
@@ -195,23 +195,6 @@ export default function Layout({ children, onLogout }: LayoutProps) {
               className={`w-full object-contain ${isDark ? 'h-20' : 'h-[70px]'}`}
             />
           )}
-        </div>
-
-        {/* Collapse Toggle */}
-        <div className="p-4 border-b border-gray-300 dark:border-gray-700">
-          <div className="flex items-center justify-end">
-            <button
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="p-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-all duration-200 hover:text-gray-900 dark:hover:text-white"
-              aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {isSidebarCollapsed ? (
-                <FaChevronRight className={isSidebarCollapsed ? 'text-lg' : 'text-sm'} />
-              ) : (
-                <FaChevronLeft className="text-sm" />
-              )}
-            </button>
-          </div>
         </div>
 
         {/* Navigation Links */}
@@ -243,51 +226,45 @@ export default function Layout({ children, onLogout }: LayoutProps) {
           })}
         </nav>
 
-        {/* Bottom Actions */}
-        <div className="p-3 border-t border-blue-200/50 dark:border-blue-800/50 flex items-center justify-between gap-2">
+        {/* Bottom Actions - Theme Toggle and Collapse Toggle */}
+        <div className={`p-3 border-t border-blue-200/50 dark:border-blue-800/50 ${isSidebarCollapsed ? 'flex flex-col-reverse items-center gap-2' : 'flex items-center justify-between'}`}>
           <button
-            onClick={() => setShowPasswordModal(true)}
-            className={`rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-300 flex items-center justify-center text-gray-700 dark:text-gray-300 shadow-md hover:shadow-lg ${
+            onClick={() => {
+              const newIsDark = !isDark
+              setIsDark(newIsDark)
+              if (newIsDark) {
+                document.documentElement.classList.add('dark')
+                localStorage.setItem('theme', 'dark')
+              } else {
+                document.documentElement.classList.remove('dark')
+                localStorage.setItem('theme', 'light')
+              }
+            }}
+            className={`rounded-full bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 hover:from-blue-100 hover:to-green-100 dark:hover:from-blue-900/30 dark:hover:to-green-900/30 transition-all duration-300 flex items-center justify-center text-gray-700 dark:text-gray-300 shadow-md hover:shadow-lg ${
               isSidebarCollapsed ? 'w-12 h-12' : 'w-9 h-9'
             }`}
-            title="Settings"
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
-            <FaCog className={isSidebarCollapsed ? 'text-lg' : 'text-sm'} />
+            {isDark ? (
+              <FaSun className={`text-yellow-500 ${isSidebarCollapsed ? 'text-lg' : 'text-sm'}`} />
+            ) : (
+              <FaMoon className={`text-blue-600 dark:text-blue-400 ${isSidebarCollapsed ? 'text-lg' : 'text-sm'}`} />
+            )}
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                const newIsDark = !isDark
-                setIsDark(newIsDark)
-                if (newIsDark) {
-                  document.documentElement.classList.add('dark')
-                  localStorage.setItem('theme', 'dark')
-                } else {
-                  document.documentElement.classList.remove('dark')
-                  localStorage.setItem('theme', 'light')
-                }
-              }}
-              className={`rounded-full bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 hover:from-blue-100 hover:to-green-100 dark:hover:from-blue-900/30 dark:hover:to-green-900/30 transition-all duration-300 flex items-center justify-center text-gray-700 dark:text-gray-300 shadow-md hover:shadow-lg ${
-                isSidebarCollapsed ? 'w-12 h-12' : 'w-9 h-9'
-              }`}
-              title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            >
-              {isDark ? (
-                <FaSun className={`text-yellow-500 ${isSidebarCollapsed ? 'text-lg' : 'text-sm'}`} />
-              ) : (
-                <FaMoon className={`text-blue-600 dark:text-blue-400 ${isSidebarCollapsed ? 'text-lg' : 'text-sm'}`} />
-              )}
-            </button>
-            <button
-              onClick={handleLogout}
-              className={`rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-300 flex items-center justify-center shadow-md hover:shadow-lg ${
-                isSidebarCollapsed ? 'w-12 h-12' : 'w-9 h-9'
-              }`}
-              title="Logout"
-            >
-              <FaSignOutAlt className={isSidebarCollapsed ? 'text-lg' : 'text-sm'} />
-            </button>
-          </div>
+          <button
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className={`rounded-full bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 hover:from-blue-100 hover:to-green-100 dark:hover:from-blue-900/30 dark:hover:to-green-900/30 transition-all duration-300 flex items-center justify-center text-gray-700 dark:text-gray-300 shadow-md hover:shadow-lg ${
+              isSidebarCollapsed ? 'w-12 h-12' : 'w-9 h-9'
+            }`}
+            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isSidebarCollapsed ? (
+              <FaChevronRight className={isSidebarCollapsed ? 'text-lg' : 'text-sm'} />
+            ) : (
+              <FaChevronLeft className="text-sm" />
+            )}
+          </button>
         </div>
       </aside>
 
@@ -395,6 +372,33 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                               </div>
                             )}
                           </div>
+                        </div>
+
+                        {/* Settings and Logout */}
+                        <div className="py-2 border-t border-gray-200 dark:border-gray-700">
+                          <button
+                            onClick={() => {
+                              setShowPasswordModal(true)
+                              setShowAccountMenu(false)
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors flex items-center gap-3"
+                          >
+                            <FaCog className="text-gray-500 dark:text-gray-400" />
+                            <span>Settings</span>
+                          </button>
+                          
+                          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+
+                          <button
+                            onClick={() => {
+                              handleLogout()
+                              setShowAccountMenu(false)
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
+                          >
+                            <FaSignOutAlt />
+                            <span>Logout</span>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -512,6 +516,33 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                             </div>
                           )}
                         </div>
+                      </div>
+
+                      {/* Settings and Logout */}
+                      <div className="py-2 border-t border-gray-200 dark:border-gray-700">
+                        <button
+                          onClick={() => {
+                            setShowPasswordModal(true)
+                            setShowAccountMenu(false)
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors flex items-center gap-3"
+                        >
+                          <FaCog className="text-gray-500 dark:text-gray-400" />
+                          <span>Settings</span>
+                        </button>
+                        
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+
+                        <button
+                          onClick={() => {
+                            handleLogout()
+                            setShowAccountMenu(false)
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-3"
+                        >
+                          <FaSignOutAlt />
+                          <span>Logout</span>
+                        </button>
                       </div>
                     </div>
                   )}

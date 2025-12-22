@@ -21,7 +21,7 @@ import { getScreenshotAttempts } from '../utils/screenshotProtection'
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const { role } = useUser()
+  const { role, user } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   
   // Modal states
@@ -55,11 +55,23 @@ const Dashboard = () => {
   const [refreshKey, setRefreshKey] = useState(0)
 
   // Get rooms with last message and unread count
+  // Only show rooms where the user is a member or is the owner
   const rooms = useMemo(() => {
+    if (!user?.id) return []
+    
     const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
     const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
     
-    return allRooms.map(room => {
+    // Filter rooms: user must be owner OR member
+    const userRooms = allRooms.filter(room => {
+      // User is the owner
+      if (room.ownerId === user.id) return true
+      // User is in the memberIds list
+      if (room.memberIds && room.memberIds.includes(user.id)) return true
+      return false
+    })
+    
+    return userRooms.map(room => {
       const roomMessages = allMessages
         .filter(msg => msg.roomId === room.id)
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
@@ -74,7 +86,7 @@ const Dashboard = () => {
         unreadCount: unreadCount || 0,
       }
     }).sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime())
-  }, [refreshKey])
+  }, [refreshKey, user?.id])
 
   // Get upcoming meetings (next 3-5) - connected to Calendar events
   const upcomingMeetings = useMemo(() => {

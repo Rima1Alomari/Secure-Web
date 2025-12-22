@@ -1,26 +1,33 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FaSearch, FaVideo, FaFile, FaCalendarAlt, FaComments, FaTimes, FaRobot, FaSpinner } from 'react-icons/fa'
+import { FaSearch, FaVideo, FaFile, FaCalendarAlt, FaComments, FaTimes, FaRobot, FaSpinner, FaUser } from 'react-icons/fa'
 import SearchResultsModal from './SearchResultsModal'
 import { getJSON } from '../data/storage'
-import { ROOMS_KEY, FILES_KEY, EVENTS_KEY, CHAT_MESSAGES_KEY } from '../data/keys'
+import { ROOMS_KEY, FILES_KEY, EVENTS_KEY, CHAT_MESSAGES_KEY, ADMIN_USERS_KEY } from '../data/keys'
+import { useUser } from '../contexts/UserContext'
+import { AdminUserMock } from '../types/models'
 
 interface SearchResult {
   id: string
   title: string
-  type: 'room' | 'file' | 'event' | 'message'
+  type: 'room' | 'file' | 'event' | 'chat'
   path: string
   metadata?: string
+  fileId?: string
+  eventId?: string
+  chatId?: string
+  userId?: string
 }
 
 const typeConfig = {
   room: { icon: FaVideo, label: 'Rooms', color: 'text-blue-600 dark:text-blue-400' },
   file: { icon: FaFile, label: 'Files', color: 'text-green-600 dark:text-green-400' },
   event: { icon: FaCalendarAlt, label: 'Events', color: 'text-purple-600 dark:text-purple-400' },
-  message: { icon: FaComments, label: 'Messages', color: 'text-orange-600 dark:text-orange-400' },
+  chat: { icon: FaUser, label: 'Chats', color: 'text-orange-600 dark:text-orange-400' },
 }
 
 export default function GlobalSearch() {
+  const { user } = useUser()
   const [isOpen, setIsOpen] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -33,10 +40,50 @@ export default function GlobalSearch() {
 
   // Get all searchable items from storage
   const getAllSearchableItems = (): SearchResult[] => {
+    if (!user?.id) return []
+    
     const rooms = getJSON<any[]>(ROOMS_KEY, []) || []
     const files = getJSON<any[]>(FILES_KEY, []) || []
     const events = getJSON<any[]>(EVENTS_KEY, []) || []
     const messages = getJSON<any[]>(CHAT_MESSAGES_KEY, []) || []
+    const allUsers = getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+
+    // Get direct chats (chats with users)
+    const chatMap = new Map<string, { userId: string; userName: string; lastMessage?: string }>()
+    
+    messages.forEach(msg => {
+      if (!msg.roomId && msg.recipientId && msg.senderId) {
+        // Determine the other user
+        const otherUserId = msg.senderId === user.id ? msg.recipientId : msg.senderId
+        const otherUserName = msg.senderId === user.id ? (msg.recipientName || msg.recipientId) : (msg.sender || msg.senderId)
+        
+        // Create chat ID (sorted user IDs)
+        const chatId = [user.id, otherUserId].sort().join('-')
+        
+        if (!chatMap.has(chatId)) {
+          // Try to get user name from allUsers
+          const userData = allUsers.find(u => u.id === otherUserId)
+          chatMap.set(chatId, {
+            userId: otherUserId,
+            userName: userData?.name || otherUserName || 'Unknown User',
+            lastMessage: msg.message
+          })
+        }
+      }
+    })
+
+    // Also include all users who might not have messages yet (for starting new chats)
+    allUsers.forEach(u => {
+      if (u.id !== user.id) {
+        const chatId = [user.id, u.id].sort().join('-')
+        if (!chatMap.has(chatId)) {
+          chatMap.set(chatId, {
+            userId: u.id,
+            userName: u.name || u.email,
+          })
+        }
+      }
+    })
 
     const results: SearchResult[] = [
       ...rooms.map(room => ({
@@ -51,21 +98,25 @@ export default function GlobalSearch() {
         title: file.name,
         type: 'file' as const,
         path: '/files',
-        metadata: `${file.type || 'File'} • ${(file.size / 1024).toFixed(1)} KB`
+        metadata: `${file.type || 'File'} • ${file.size ? (file.size / 1024).toFixed(1) + ' KB' : 'File'}`,
+        fileId: file.id
       })),
       ...events.map(event => ({
         id: event.id,
         title: event.title,
         type: 'event' as const,
         path: '/calendar',
-        metadata: `${event.date} • ${event.time || ''}`
+        metadata: `${event.date} • ${event.time || ''}`,
+        eventId: event.id
       })),
-      ...messages.slice(0, 20).map(msg => ({
-        id: msg.id,
-        title: msg.message?.substring(0, 50) || 'Message',
-        type: 'message' as const,
-        path: `/rooms/${msg.roomId}`,
-        metadata: `From: ${msg.sender || 'User'}`
+      ...Array.from(chatMap.entries()).map(([chatId, chat]) => ({
+        id: chatId,
+        title: chat.userName,
+        type: 'chat' as const,
+        path: '/chat',
+        metadata: chat.lastMessage ? `Last: ${chat.lastMessage.substring(0, 30)}...` : 'Start chat',
+        chatId: chatId,
+        userId: chat.userId
       }))
     ]
 
@@ -143,8 +194,18 @@ export default function GlobalSearch() {
     } else {
       setFilteredResults([])
       setIsAISearch(false)
+      setIsOpen(false)
     }
   }, [searchQuery])
+
+  // Show dropdown when results are available while typing
+  useEffect(() => {
+    if (filteredResults.length > 0 && searchQuery.trim()) {
+      setIsOpen(true)
+    } else if (filteredResults.length === 0 && searchQuery.trim()) {
+      setIsOpen(true) // Show empty state message
+    }
+  }, [filteredResults, searchQuery])
 
   // Group results by type
   const groupedResults = filteredResults.reduce((acc, result) => {
@@ -169,7 +230,19 @@ export default function GlobalSearch() {
 
   // Handle result click
   const handleResultClick = (result: SearchResult) => {
-    navigate(result.path)
+    if (result.type === 'event' && result.eventId) {
+      // Navigate to calendar with event focus
+      navigate('/calendar', { state: { focusEventId: result.eventId } })
+    } else if (result.type === 'file' && result.fileId) {
+      // Navigate to files page with file ID in state (FileManager can use this to highlight the file)
+      navigate('/files', { state: { highlightFileId: result.fileId } })
+    } else if (result.type === 'chat' && result.chatId && result.userId) {
+      // Navigate to chat page with chat selection
+      navigate('/chat', { state: { selectChat: { type: 'direct', id: result.chatId, name: result.title, userId: result.userId } } })
+    } else {
+      // Navigate to the path for rooms
+      navigate(result.path)
+    }
     setIsOpen(false)
     setSearchQuery('')
   }
@@ -270,22 +343,20 @@ export default function GlobalSearch() {
                       <button
                         key={result.id}
                         onClick={() => handleResultClick(result)}
-                        className="w-full px-3 py-2.5 text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors duration-150 group"
+                        className="w-full px-3 py-2.5 text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors duration-150 group flex items-center gap-3"
                       >
-                        <div className="flex items-start gap-3">
-                          <div className={`mt-0.5 ${config.color}`}>
-                            <Icon className="text-sm" />
+                        <div className={`flex-shrink-0 w-8 h-8 rounded-lg ${config.color} bg-opacity-10 dark:bg-opacity-20 flex items-center justify-center`}>
+                          <Icon className={`${config.color} text-base`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate">
+                            {result.title}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                              {result.title}
+                          {result.metadata && (
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                              {result.metadata}
                             </div>
-                            {result.metadata && (
-                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
-                                {result.metadata}
-                              </div>
-                            )}
-                          </div>
+                          )}
                         </div>
                       </button>
                     ))}

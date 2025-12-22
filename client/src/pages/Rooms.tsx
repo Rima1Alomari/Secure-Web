@@ -16,8 +16,8 @@ const Rooms = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newRoom, setNewRoom] = useState<{ name: string; description: string; isPrivate: boolean }>({ name: '', description: '', isPrivate: false })
-  const [roomClassification, setRoomClassification] = useState<'Normal' | 'Confidential' | 'Restricted'>('Normal')
   const [inviteSearchQuery, setInviteSearchQuery] = useState('')
+  const inviteSearchRef = useRef<HTMLDivElement>(null)
   const [invitedUserIds, setInvitedUserIds] = useState<string[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [selectedRoomMenu, setSelectedRoomMenu] = useState<string | null>(null)
@@ -176,8 +176,8 @@ const Rooms = () => {
       createdAt: nowISO(),
       updatedAt: nowISO(),
       ownerId: String(user.id), // Set the creator as owner (ensure string)
-      roomLevel: roomClassification,
-      classification: roomClassification,
+      roomLevel: 'Normal',
+      classification: 'Normal',
       memberIds: allMemberIds, // Add creator and invited users (all as strings)
     }
 
@@ -191,7 +191,6 @@ const Rooms = () => {
       auditHelpers.logRoomCreate(room.name, room.id)
       
       setNewRoom({ name: '', description: '', isPrivate: false })
-      setRoomClassification('Normal')
       setInviteSearchQuery('')
       setInvitedUserIds([])
       setShowCreateModal(false)
@@ -847,7 +846,6 @@ const Rooms = () => {
           onClose={() => {
             setShowCreateModal(false)
             setNewRoom({ name: '', description: '', isPrivate: false })
-            setRoomClassification('Normal')
             setInviteSearchQuery('')
             setInvitedUserIds([])
           }}
@@ -879,30 +877,15 @@ const Rooms = () => {
                 rows={3}
               />
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Data Classification Level *
-              </label>
-              <select
-                value={roomClassification}
-                onChange={(e) => setRoomClassification(e.target.value as 'Normal' | 'Confidential' | 'Restricted')}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-              >
-                <option value="Normal">Normal - Standard business data, accessible to all authorized users</option>
-                <option value="Confidential">Confidential - Sensitive data, restricted access, requires admin/security roles</option>
-                <option value="Restricted">Restricted - Highly sensitive data, security role only with approval</option>
-              </select>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Select the appropriate classification level for this room's data
-              </p>
-            </div>
-            
             {/* Invite Users Section */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                 Invite Users (by ID, name, or email)
               </label>
-              <div className="relative">
+              <div 
+                ref={inviteSearchRef}
+                className="relative"
+              >
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <FaSearch className="text-gray-400 dark:text-gray-500" />
                 </div>
@@ -916,7 +899,14 @@ const Rooms = () => {
                 
                 {/* Search Results Dropdown */}
                 {inviteSearchQuery.trim() && filteredUsersForInvite.length > 0 && (
-                  <div className="absolute z-50 w-full mt-2 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                  <div 
+                    className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-60 overflow-y-auto z-[100]"
+                    style={{
+                      top: `${inviteSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                      left: `${inviteSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                      width: `${inviteSearchRef.current?.getBoundingClientRect().width || 0}px`
+                    }}
+                  >
                     {filteredUsersForInvite.map((user) => (
                       <button
                         key={user.id}
@@ -948,7 +938,14 @@ const Rooms = () => {
                 )}
                 
                 {inviteSearchQuery.trim() && filteredUsersForInvite.length === 0 && (
-                  <div className="absolute z-50 w-full mt-2 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                  <div 
+                    className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 text-center text-sm text-gray-500 dark:text-gray-400 z-[100]"
+                    style={{
+                      top: `${inviteSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                      left: `${inviteSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                      width: `${inviteSearchRef.current?.getBoundingClientRect().width || 0}px`
+                    }}
+                  >
                     No users found
                   </div>
                 )}
@@ -996,7 +993,6 @@ const Rooms = () => {
                 onClick={() => {
                   setShowCreateModal(false)
                   setNewRoom({ name: '', description: '', isPrivate: false })
-                  setRoomClassification('Normal')
                   setInviteSearchQuery('')
                   setInvitedUserIds([])
                 }}

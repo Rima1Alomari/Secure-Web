@@ -13,15 +13,20 @@ import {
   FaLock,
   FaDownload,
   FaFile,
-  FaPlus
+  FaPlus,
+  FaSearch,
+  FaUserPlus,
+  FaTimes,
+  FaEllipsisV
 } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
-import { ROOMS_KEY, CHAT_MESSAGES_KEY, FILES_KEY, EVENTS_KEY } from '../data/keys'
-import { Room, ChatMessage, FileItem, EventItem } from '../types/models'
+import { ROOMS_KEY, CHAT_MESSAGES_KEY, FILES_KEY, EVENTS_KEY, ADMIN_USERS_KEY } from '../data/keys'
+import { Room, ChatMessage, FileItem, EventItem, AdminUserMock } from '../types/models'
 import { useUser } from '../contexts/UserContext'
 import { trackRoomOpened } from '../utils/recentTracker'
 import { getToken } from '../utils/auth'
+import { createNotification } from '../services/firestore'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -55,8 +60,12 @@ const RoomDetails = () => {
   
   // Form states
   const [newRoomName, setNewRoomName] = useState('')
-  const [roomLevel, setRoomLevel] = useState<'Normal' | 'Confidential'>('Normal')
   const [memberIds, setMemberIds] = useState<string[]>([])
+  const [allUsers, setAllUsers] = useState<AdminUserMock[]>([])
+  const [memberSearchQuery, setMemberSearchQuery] = useState('')
+  const memberSearchRef = useRef<HTMLDivElement>(null)
+  const [selectedMemberMenu, setSelectedMemberMenu] = useState<string | null>(null)
+  const memberMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
@@ -78,7 +87,6 @@ const RoomDetails = () => {
 
     setRoom(foundRoom)
     setNewRoomName(foundRoom.name)
-    setRoomLevel(foundRoom.roomLevel || 'Normal')
     setMemberIds(foundRoom.memberIds || [])
     
     // Track room opened
@@ -150,12 +158,54 @@ const RoomDetails = () => {
     setIsLoading(false)
   }, [id, navigate])
 
+  // Fetch users for member management
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const token = getToken() || 'mock-token-for-testing'
+        const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+        
+        // Try to fetch real users from API
+        const response = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        if (response.data && response.data.length > 0) {
+          // Map API users to AdminUserMock format
+          const mappedUsers: AdminUserMock[] = response.data.map((u: any) => ({
+            id: u.id || u._id,
+            userId: u.userId,
+            name: u.name,
+            email: u.email,
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: 'Active' as const,
+            createdAt: new Date().toISOString()
+          }))
+          setAllUsers(mappedUsers)
+          // Also save to localStorage for offline/demo mode
+          setJSON(ADMIN_USERS_KEY, mappedUsers)
+        } else {
+          // Fallback to localStorage mock users
+          const mockUsers = getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+          setAllUsers(mockUsers)
+        }
+      } catch (error) {
+        // If API fails, use localStorage mock users
+        console.warn('Failed to fetch users from API, using mock users:', error)
+        const mockUsers = getJSON<AdminUserMock[]>(ADMIN_USERS_KEY, []) || []
+        setAllUsers(mockUsers)
+      }
+    }
+    
+    fetchUsers()
+  }, [])
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !id) return
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !id || !user?.id) return
 
     const message: ChatMessage = {
       id: uuid(),
@@ -183,6 +233,23 @@ const RoomDetails = () => {
       )
       setJSON(ROOMS_KEY, updatedRooms)
       setRoom(updatedRooms.find(r => r.id === id) || null)
+      
+      // Create notifications for all room members except sender
+      try {
+        const memberIds = room.memberIds || []
+        const recipientIds = memberIds.filter(memberId => memberId !== user.id)
+        
+        await Promise.all(recipientIds.map(recipientId => 
+          createNotification({
+            userId: recipientId,
+            message: `${user.name || user.email} sent a message in ${room.name}: ${newMessage.substring(0, 50)}${newMessage.length > 50 ? '...' : ''}`,
+            type: 'message',
+            link: `/rooms/${id}`
+          }).catch(err => console.error('Error creating notification:', err))
+        ))
+      } catch (error) {
+        console.error('Error creating room notifications:', error)
+      }
     }
   }
 
@@ -355,7 +422,7 @@ const RoomDetails = () => {
     const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
     const updatedRooms = allRooms.map(r => 
       r.id === id 
-        ? { ...r, roomLevel, memberIds, updatedAt: nowISO() }
+        ? { ...r, name: newRoomName, memberIds, updatedAt: nowISO() }
         : r
     )
     setJSON(ROOMS_KEY, updatedRooms)
@@ -431,13 +498,6 @@ const RoomDetails = () => {
                 title="Room Settings"
               >
                 <FaCog />
-              </button>
-              <button
-                onClick={() => setShowRenameModal(true)}
-                className="btn-secondary"
-                title="Rename Room"
-              >
-                <FaEdit />
               </button>
               <button
                 onClick={() => setShowDeleteConfirm(true)}
@@ -750,95 +810,203 @@ const RoomDetails = () => {
         {/* Settings Modal */}
         <Modal
           isOpen={showSettingsModal}
-          onClose={() => setShowSettingsModal(false)}
+          onClose={() => {
+            setShowSettingsModal(false)
+            setMemberSearchQuery('')
+            setSelectedMemberMenu(null)
+          }}
           title="Room Settings"
         >
           <div className="space-y-4">
+            {/* Rename Section */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Room Level
+                Room Name
               </label>
-              <select
-                value={roomLevel}
-                onChange={(e) => setRoomLevel(e.target.value as 'Normal' | 'Confidential')}
+              <input
+                type="text"
+                value={newRoomName}
+                onChange={(e) => setNewRoomName(e.target.value)}
                 className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-              >
-                <option value="Normal">Normal</option>
-                <option value="Confidential">Confidential</option>
-              </select>
+                placeholder="Enter room name"
+              />
             </div>
+
+            {/* Members Section */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Manage Members ({memberIds.length})
+                Members ({memberIds.length})
               </label>
               <div className="space-y-3">
                 {memberIds.length === 0 ? (
                   <p className="text-sm text-gray-600 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    No members added yet. Add member IDs below.
+                    No members added yet. Add members below.
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {memberIds.map((memberId, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FaUser className="text-gray-500 dark:text-gray-400" />
-                          <span className="text-sm text-gray-900 dark:text-white font-medium">
-                            {memberId || `Member ${index + 1}`}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            const updated = memberIds.filter((_, i) => i !== index)
-                            setMemberIds(updated)
-                          }}
-                          className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors"
-                          title="Remove member"
+                    {memberIds.map((memberId) => {
+                      const member = allUsers.find(u => u.id === memberId)
+                      return (
+                        <div
+                          key={memberId}
+                          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
                         >
-                          <FaTrash className="text-sm" />
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0">
+                              {member ? getInitials(member.name) : '?'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-gray-900 dark:text-white font-medium">
+                                {member ? member.name : memberId}
+                              </p>
+                              {member && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  {member.email}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div 
+                            ref={(el) => {
+                              if (el) memberMenuRefs.current[memberId] = el
+                            }}
+                            className="relative"
+                          >
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedMemberMenu(selectedMemberMenu === memberId ? null : memberId)
+                              }}
+                              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            >
+                              <FaEllipsisV />
+                            </button>
+                            {selectedMemberMenu === memberId && (
+                              <>
+                                <div 
+                                  className="fixed inset-0 z-10" 
+                                  onClick={() => setSelectedMemberMenu(null)}
+                                ></div>
+                                <div 
+                                  className="fixed bg-white dark:bg-gray-800 rounded-lg shadow-xl border-2 border-gray-200 dark:border-gray-700 z-20 w-48"
+                                  style={{
+                                    top: `${memberMenuRefs.current[memberId]?.getBoundingClientRect().bottom || 0}px`,
+                                    right: `${window.innerWidth - (memberMenuRefs.current[memberId]?.getBoundingClientRect().right || 0)}px`
+                                  }}
+                                >
+                                  <button
+                                    onClick={() => {
+                                      const updated = memberIds.filter(id => id !== memberId)
+                                      setMemberIds(updated)
+                                      setSelectedMemberMenu(null)
+                                    }}
+                                    className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                  >
+                                    Remove Member
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
-                <div className="flex gap-2">
+                
+                {/* Add Member Search */}
+                <div 
+                  ref={memberSearchRef}
+                  className="relative"
+                >
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <FaSearch className="text-gray-400 dark:text-gray-500" />
+                  </div>
                   <input
                     type="text"
-                    placeholder="Enter member ID or email"
-                    className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        const input = e.target as HTMLInputElement
-                        const value = input.value.trim()
-                        if (value && !memberIds.includes(value)) {
-                          setMemberIds([...memberIds, value])
-                          input.value = ''
-                        }
-                      }
-                    }}
+                    value={memberSearchQuery}
+                    onChange={(e) => setMemberSearchQuery(e.target.value)}
+                    placeholder="Search by name, email, or ID..."
+                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
                   />
-                  <button
-                    onClick={(e) => {
-                      const input = (e.target as HTMLElement).previousElementSibling as HTMLInputElement
-                      const value = input?.value.trim()
-                      if (value && !memberIds.includes(value)) {
-                        setMemberIds([...memberIds, value])
-                        input.value = ''
-                      }
-                    }}
-                    className="btn-secondary px-4 py-2 text-sm"
-                    title="Add member"
-                  >
-                    <FaPlus />
-                  </button>
+                  
+                  {/* Search Results Dropdown */}
+                  {memberSearchQuery.trim() && (() => {
+                    const query = memberSearchQuery.toLowerCase()
+                    const filtered = allUsers.filter(u => 
+                      u.id !== user?.id && 
+                      !memberIds.includes(u.id) &&
+                      (
+                        u.name.toLowerCase().includes(query) || 
+                        u.email.toLowerCase().includes(query) ||
+                        (u.userId && u.userId.toLowerCase().includes(query))
+                      )
+                    ).slice(0, 10)
+                    
+                    return filtered.length > 0 ? (
+                      <div 
+                        className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-60 overflow-y-auto z-[100]"
+                        style={{
+                          top: `${memberSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                          left: `${memberSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                          width: `${memberSearchRef.current?.getBoundingClientRect().width || 0}px`
+                        }}
+                      >
+                        {filtered.map((user) => (
+                          <button
+                            key={user.id}
+                            onClick={() => {
+                              if (!memberIds.includes(user.id)) {
+                                setMemberIds([...memberIds, user.id])
+                                setMemberSearchQuery('')
+                              }
+                            }}
+                            className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700 last:border-b-0"
+                          >
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                              {getInitials(user.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-semibold text-gray-900 dark:text-white truncate">
+                                  {user.name}
+                                </p>
+                                {user.userId && (
+                                  <span className="text-xs font-mono bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded flex-shrink-0">
+                                    {user.userId}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                {user.email}
+                              </p>
+                            </div>
+                            <FaUserPlus className="text-green-600 dark:text-green-400 flex-shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : memberSearchQuery.trim() ? (
+                      <div 
+                        className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 text-center text-sm text-gray-500 dark:text-gray-400 z-[100]"
+                        style={{
+                          top: `${memberSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                          left: `${memberSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                          width: `${memberSearchRef.current?.getBoundingClientRect().width || 0}px`
+                        }}
+                      >
+                        No users found
+                      </div>
+                    ) : null
+                  })()}
                 </div>
               </div>
             </div>
             <div className="flex gap-3 pt-4">
               <button
-                onClick={() => setShowSettingsModal(false)}
+                onClick={() => {
+                  setShowSettingsModal(false)
+                  setMemberSearchQuery('')
+                }}
                 className="btn-secondary flex-1"
               >
                 Cancel

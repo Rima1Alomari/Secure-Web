@@ -28,6 +28,8 @@ import {
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
 import { getToken } from '../utils/auth'
+import { getJSON, setJSON, uuid } from '../data/storage'
+import { NOTIFICATIONS_KEY } from '../data/keys'
 
 // Collection names
 const COLLECTIONS = {
@@ -106,30 +108,53 @@ export async function getAllUsers() {
  * Create or update user
  */
 export async function saveUser(userData: any) {
-  const userId = userData.id
-  if (!userId) {
-    throw new Error('User ID is required')
+  try {
+    const userId = userData.id
+    if (!userId) {
+      throw new Error('User ID is required')
+    }
+    
+    // Check if db is valid
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      console.warn('Firestore db not initialized, skipping saveUser')
+      return { id: userId, ...userData }
+    }
+    
+    const userRef = doc(db, COLLECTIONS.USERS, userId)
+    await setDoc(userRef, {
+      ...userData,
+      updatedAt: serverTimestamp(),
+      lastSeen: serverTimestamp()
+    }, { merge: true })
+    
+    return { id: userId, ...userData }
+  } catch (error) {
+    console.error('Error saving user to Firestore:', error)
+    // Return user data even if Firestore fails
+    return { id: userData.id, ...userData }
   }
-  
-  const userRef = doc(db, COLLECTIONS.USERS, userId)
-  await setDoc(userRef, {
-    ...userData,
-    updatedAt: serverTimestamp(),
-    lastSeen: serverTimestamp()
-  }, { merge: true })
-  
-  return { id: userId, ...userData }
 }
 
 /**
  * Update user online status
  */
 export async function updateUserPresence(userId: string, isOnline: boolean) {
-  const userRef = doc(db, COLLECTIONS.USERS, userId)
-  await updateDoc(userRef, {
-    isOnline,
-    lastSeen: serverTimestamp()
-  })
+  try {
+    // Check if db is valid
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      console.warn('Firestore db not initialized, skipping updateUserPresence')
+      return
+    }
+    
+    const userRef = doc(db, COLLECTIONS.USERS, userId)
+    await updateDoc(userRef, {
+      isOnline,
+      lastSeen: serverTimestamp()
+    })
+  } catch (error) {
+    console.error('Error updating user presence:', error)
+    // Silently fail - presence updates are not critical
+  }
 }
 
 /**
@@ -327,9 +352,73 @@ export async function markMessageAsRead(messageId: string, userId: string) {
  * Listen to messages in a room (real-time)
  */
 export function subscribeToMessages(roomId: string, callback: (messages: any[]) => void) {
+  if (!db) {
+    return () => {}
+  }
+  
   const messagesQuery = query(
     collection(db, COLLECTIONS.MESSAGES),
     where('roomId', '==', roomId),
+    orderBy('timestamp', 'asc')
+  )
+  
+  return onSnapshot(messagesQuery, (snapshot) => {
+    const messages = snapshot.docs.map(doc => {
+      const data = doc.data()
+      return {
+        id: doc.id,
+        ...data,
+        timestamp: timestampToDate(data.timestamp)
+      }
+    })
+    callback(messages)
+  })
+}
+
+/**
+ * Send a direct message (between two users)
+ */
+export async function sendDirectMessage(senderId: string, recipientId: string, messageData: any) {
+  if (!db) {
+    return null
+  }
+  
+  const messagesRef = collection(db, COLLECTIONS.MESSAGES)
+  
+  // Create a composite roomId for direct messages (sorted user IDs)
+  const directRoomId = [senderId, recipientId].sort().join('-')
+  
+  const newMessage = {
+    ...messageData,
+    senderId,
+    recipientId,
+    userId: senderId, // For compatibility
+    roomId: `direct-${directRoomId}`, // Use composite roomId for direct messages
+    timestamp: serverTimestamp(),
+    readBy: [senderId],
+    readCount: 1
+  }
+  
+  const docRef = await addDoc(messagesRef, newMessage)
+  
+  return { id: docRef.id, ...newMessage }
+}
+
+/**
+ * Listen to direct messages between two users (real-time)
+ */
+export function subscribeToDirectMessages(userId1: string, userId2: string, callback: (messages: any[]) => void) {
+  if (!db) {
+    return () => {}
+  }
+  
+  // Create composite roomId for direct messages (sorted user IDs)
+  const directRoomId = `direct-${[userId1, userId2].sort().join('-')}`
+  
+  // Query for messages with this composite roomId
+  const messagesQuery = query(
+    collection(db, COLLECTIONS.MESSAGES),
+    where('roomId', '==', directRoomId),
     orderBy('timestamp', 'asc')
   )
   
@@ -568,15 +657,49 @@ export async function getNotifications(userId: string) {
  * Create notification
  */
 export async function createNotification(notificationData: any) {
-  const notificationsRef = collection(db, COLLECTIONS.NOTIFICATIONS)
-  const newNotification = {
-    ...notificationData,
-    read: false,
-    timestamp: serverTimestamp()
+  try {
+    const notificationsRef = collection(db, COLLECTIONS.NOTIFICATIONS)
+    const newNotification = {
+      ...notificationData,
+      read: false,
+      timestamp: serverTimestamp()
+    }
+    
+    const docRef = await addDoc(notificationsRef, newNotification)
+    
+    // Also save to localStorage as fallback
+    try {
+      const existing = getJSON<any[]>(NOTIFICATIONS_KEY, []) || []
+      const notificationWithId = {
+        id: docRef.id,
+        ...notificationData,
+        read: false,
+        timestamp: new Date().toISOString()
+      }
+      setJSON(NOTIFICATIONS_KEY, [...existing, notificationWithId])
+    } catch (localError) {
+      console.error('Error saving notification to localStorage:', localError)
+    }
+    
+    return { id: docRef.id, ...newNotification }
+  } catch (error) {
+    console.error('Error creating notification in Firestore:', error)
+    // Fallback to localStorage only
+    try {
+      const existing = getJSON<any[]>(NOTIFICATIONS_KEY, []) || []
+      const notificationWithId = {
+        id: uuid(),
+        ...notificationData,
+        read: false,
+        timestamp: new Date().toISOString()
+      }
+      setJSON(NOTIFICATIONS_KEY, [...existing, notificationWithId])
+      return notificationWithId
+    } catch (localError) {
+      console.error('Error saving notification to localStorage:', localError)
+      throw error
+    }
   }
-  
-  const docRef = await addDoc(notificationsRef, newNotification)
-  return { id: docRef.id, ...newNotification }
 }
 
 /**
