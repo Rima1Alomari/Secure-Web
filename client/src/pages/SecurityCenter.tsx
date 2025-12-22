@@ -25,15 +25,11 @@ import { Toast, Modal, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { AUDIT_LOGS_KEY, ACCESS_RULES_KEY } from '../data/keys'
 import { AuditLog, AccessRule } from '../types/models'
-import { useUser } from '../contexts/UserContext'
-import AISecurityDashboard from '../components/AISecurityDashboard'
-import SecurityIncidentManagement from '../components/SecurityIncidentManagement'
 
 type Classification = 'Normal' | 'Confidential' | 'Restricted'
-type Tab = 'classification' | 'access-rules' | 'audit-log' | 'ai-security' | 'incidents'
+type Tab = 'classification' | 'access-rules' | 'audit-log'
 
 export default function SecurityCenter() {
-  const { role } = useUser()
   const [activeTab, setActiveTab] = useState<Tab>('classification')
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
@@ -608,28 +604,6 @@ export default function SecurityCenter() {
             >
               Audit Log
             </button>
-            <button
-              onClick={() => setActiveTab('ai-security')}
-              className={`px-6 py-3 font-semibold transition-all duration-200 border-b-2 ${
-                activeTab === 'ai-security'
-                  ? 'border-blue-600 dark:border-blue-400 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              AI Security Dashboard
-            </button>
-            {(role === 'admin' || role === 'security') && (
-              <button
-                onClick={() => setActiveTab('incidents')}
-                className={`px-6 py-3 font-semibold transition-all duration-200 border-b-2 ${
-                  activeTab === 'incidents'
-                    ? 'border-slate-600 dark:border-slate-400 text-slate-600 dark:text-slate-400'
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                }`}
-              >
-                Incident Management
-              </button>
-            )}
           </div>
         </div>
 
@@ -978,20 +952,6 @@ export default function SecurityCenter() {
                 </>
               )}
             </div>
-          </div>
-        )}
-
-        {/* AI Security Dashboard Tab */}
-        {activeTab === 'ai-security' && (
-          <div className="space-y-6">
-            <AISecurityDashboard />
-          </div>
-        )}
-
-        {/* Incident Management Tab */}
-        {activeTab === 'incidents' && (
-          <div className="space-y-6">
-            <SecurityIncidentManagement />
           </div>
         )}
 
