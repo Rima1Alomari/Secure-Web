@@ -42,6 +42,7 @@ const RoomDetails = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   
   // Files state
   const [roomFiles, setRoomFiles] = useState<FileItem[]>([])
@@ -115,12 +116,91 @@ const RoomDetails = () => {
           trackRoomOpened(foundRoom.id, foundRoom.name, user.id)
         }
         
-        // Load messages for this room
-        const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-        const roomMessages = allMessages
-          .filter(msg => msg.roomId === id)
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-        setMessages(roomMessages)
+        // Load messages for this room from API
+        const fetchMessages = async () => {
+          try {
+            const token = getToken() || 'mock-token-for-testing'
+            const response = await axios.get(`${API_URL}/chat/room/${id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+            
+            const apiMessages = response.data.map((msg: any) => {
+              const msgSenderId = msg.senderId ? String(msg.senderId) : (msg.sender?._id ? String(msg.sender._id) : String(msg.sender || ''))
+              const currentUserId = String(user?.id || '')
+              
+              let timestampStr = msg.timestamp
+              if (!timestampStr) {
+                timestampStr = new Date().toISOString()
+              } else if (typeof timestampStr !== 'string') {
+                timestampStr = new Date(timestampStr).toISOString()
+              }
+              
+              return {
+                id: msg.id || String(msg._id || Date.now()),
+                message: msg.message || '',
+                sender: msg.sender || 'Unknown',
+                senderId: msgSenderId,
+                timestamp: timestampStr,
+                isOwn: msg.isOwn !== undefined ? msg.isOwn : (msgSenderId === currentUserId),
+                roomId: msg.roomId,
+                recipientId: msg.recipientId,
+                read: msg.read !== undefined ? msg.read : false
+              }
+            }).sort((a: ChatMessage, b: ChatMessage) => {
+              const timeA = new Date(a.timestamp).getTime()
+              const timeB = new Date(b.timestamp).getTime()
+              return timeA - timeB
+            })
+            
+            setMessages(apiMessages)
+            
+            // Save to localStorage as backup
+            try {
+              const baseKey = CHAT_MESSAGES_KEY
+              const existingMessages = JSON.parse(localStorage.getItem(baseKey) || '[]') || []
+              const existingIds = new Set(existingMessages.map((m: ChatMessage) => m.id))
+              
+              const merged = [...existingMessages]
+              apiMessages.forEach((newMsg: ChatMessage) => {
+                if (!existingIds.has(newMsg.id)) {
+                  merged.push(newMsg)
+                } else {
+                  const index = merged.findIndex(m => m.id === newMsg.id)
+                  if (index !== -1) {
+                    merged[index] = newMsg
+                  }
+                }
+              })
+              
+              const uniqueMessages = Array.from(
+                new Map(merged.map((m: ChatMessage) => [m.id, m])).values()
+              )
+              localStorage.setItem(baseKey, JSON.stringify(uniqueMessages))
+            } catch (error) {
+              console.error('Error saving messages to localStorage:', error)
+            }
+          } catch (error: any) {
+            console.error('Error fetching messages from API:', error)
+            // Fallback to localStorage
+            const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+            const roomMessages = allMessages
+              .filter(msg => msg.roomId === id)
+              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+            setMessages(roomMessages)
+          }
+        }
+        
+        fetchMessages()
+        
+        // Set up polling for new messages (every 2 seconds)
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current)
+        }
+        pollingIntervalRef.current = setInterval(() => {
+          fetchMessages().catch(err => {
+            console.error('Error in polling fetchMessages:', err)
+          })
+        }, 2000)
         
         // Load files for this room from backend API
         const fetchRoomFiles = async () => {
@@ -194,12 +274,65 @@ const RoomDetails = () => {
           trackRoomOpened(foundRoom.id, foundRoom.name, user.id)
         }
         
-        // Load messages for this room
-        const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-        const roomMessages = allMessages
-          .filter(msg => msg.roomId === id)
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-        setMessages(roomMessages)
+        // Load messages for this room from API (fallback in catch block)
+        const fetchMessagesFallback = async () => {
+          try {
+            const token = getToken() || 'mock-token-for-testing'
+            const response = await axios.get(`${API_URL}/chat/room/${id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+            
+            const apiMessages = response.data.map((msg: any) => {
+              const msgSenderId = msg.senderId ? String(msg.senderId) : (msg.sender?._id ? String(msg.sender._id) : String(msg.sender || ''))
+              const currentUserId = String(user?.id || '')
+              
+              let timestampStr = msg.timestamp
+              if (!timestampStr) {
+                timestampStr = new Date().toISOString()
+              } else if (typeof timestampStr !== 'string') {
+                timestampStr = new Date(timestampStr).toISOString()
+              }
+              
+              return {
+                id: msg.id || String(msg._id || Date.now()),
+                message: msg.message || '',
+                sender: msg.sender || 'Unknown',
+                senderId: msgSenderId,
+                timestamp: timestampStr,
+                isOwn: msg.isOwn !== undefined ? msg.isOwn : (msgSenderId === currentUserId),
+                roomId: msg.roomId,
+                recipientId: msg.recipientId,
+                read: msg.read !== undefined ? msg.read : false
+              }
+            }).sort((a: ChatMessage, b: ChatMessage) => {
+              const timeA = new Date(a.timestamp).getTime()
+              const timeB = new Date(b.timestamp).getTime()
+              return timeA - timeB
+            })
+            
+            setMessages(apiMessages)
+          } catch (error: any) {
+            console.error('Error fetching messages from API (fallback):', error)
+            // Fallback to localStorage
+            const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
+            const roomMessages = allMessages
+              .filter(msg => msg.roomId === id)
+              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+            setMessages(roomMessages)
+          }
+        }
+        
+        fetchMessagesFallback()
+        
+        // Set up polling for new messages (every 2 seconds)
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current)
+        }
+        pollingIntervalRef.current = setInterval(() => {
+          fetchMessagesFallback().catch(err => {
+            console.error('Error in polling fetchMessages (fallback):', err)
+          })
+        }, 2000)
         
         // Load files for this room from backend API
         const fetchRoomFiles = async () => {
@@ -255,6 +388,14 @@ const RoomDetails = () => {
     }
     
     loadRoom()
+    
+    // Cleanup polling on unmount
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
+      }
+    }
   }, [id, navigate, user?.id])
 
   // Load users for members management
@@ -292,35 +433,127 @@ const RoomDetails = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !id) return
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !id || !user) return
 
-    const message: ChatMessage = {
-      id: uuid(),
-      sender: user?.name || 'You',
-      senderId: user?.id,
-      message: newMessage,
+    const messageText = newMessage.trim()
+    setNewMessage('')
+
+    // Optimistically add message to UI
+    const optimisticMessage: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      sender: user.name || 'You',
+      senderId: user.id,
+      message: messageText,
       timestamp: nowISO(),
       isOwn: true,
       roomId: id,
       read: false,
     }
 
-    const allMessages = getJSON<ChatMessage[]>(CHAT_MESSAGES_KEY, []) || []
-    setJSON(CHAT_MESSAGES_KEY, [...allMessages, message])
-    setMessages([...messages, message])
-    setNewMessage('')
-    
-    // Update room's last message
-    if (room) {
-      const allRooms = getJSON<Room[]>(ROOMS_KEY, []) || []
-      const updatedRooms = allRooms.map(r => 
-        r.id === id 
-          ? { ...r, lastMessage: newMessage, lastMessageTime: nowISO(), updatedAt: nowISO() }
-          : r
-      )
-      setJSON(ROOMS_KEY, updatedRooms)
-      setRoom(updatedRooms.find(r => r.id === id) || null)
+    // Add optimistic message immediately
+    setMessages(prev => [...prev, optimisticMessage])
+
+    // Send to API
+    try {
+      const token = getToken() || 'mock-token-for-testing'
+      const response = await axios.post(`${API_URL}/chat/send`, {
+        message: messageText,
+        roomId: id
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+
+      // Replace optimistic message with real one from server
+      const realMessage: ChatMessage = {
+        ...response.data,
+        timestamp: typeof response.data.timestamp === 'string' 
+          ? response.data.timestamp 
+          : new Date(response.data.timestamp).toISOString(),
+        isOwn: true,
+        sender: response.data.sender || user.name || 'You',
+        senderId: response.data.senderId || user.id
+      }
+      
+      // Replace the optimistic message with the real one
+      setMessages(prev => {
+        const filtered = prev.filter(msg => msg.id !== optimisticMessage.id)
+        return [...filtered, realMessage]
+      })
+
+      // Save to localStorage as backup
+      try {
+        const baseKey = CHAT_MESSAGES_KEY
+        const existingMessages = JSON.parse(localStorage.getItem(baseKey) || '[]') || []
+        const exists = existingMessages.some((m: ChatMessage) => m.id === realMessage.id)
+        if (!exists) {
+          const updatedMessages = [...existingMessages, realMessage]
+          localStorage.setItem(baseKey, JSON.stringify(updatedMessages))
+        }
+      } catch (error) {
+        console.error('Error saving message to localStorage:', error)
+      }
+
+      // Force refresh messages after a short delay to ensure both users see the message
+      setTimeout(() => {
+        const fetchMessages = async () => {
+          try {
+            const token = getToken() || 'mock-token-for-testing'
+            const response = await axios.get(`${API_URL}/chat/room/${id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+            
+            const apiMessages = response.data.map((msg: any) => {
+              const msgSenderId = msg.senderId ? String(msg.senderId) : (msg.sender?._id ? String(msg.sender._id) : String(msg.sender || ''))
+              const currentUserId = String(user?.id || '')
+              
+              let timestampStr = msg.timestamp
+              if (!timestampStr) {
+                timestampStr = new Date().toISOString()
+              } else if (typeof timestampStr !== 'string') {
+                timestampStr = new Date(timestampStr).toISOString()
+              }
+              
+              return {
+                id: msg.id || String(msg._id || Date.now()),
+                message: msg.message || '',
+                sender: msg.sender || 'Unknown',
+                senderId: msgSenderId,
+                timestamp: timestampStr,
+                isOwn: msg.isOwn !== undefined ? msg.isOwn : (msgSenderId === currentUserId),
+                roomId: msg.roomId,
+                recipientId: msg.recipientId,
+                read: msg.read !== undefined ? msg.read : false
+              }
+            }).sort((a: ChatMessage, b: ChatMessage) => {
+              const timeA = new Date(a.timestamp).getTime()
+              const timeB = new Date(b.timestamp).getTime()
+              return timeA - timeB
+            })
+            
+            setMessages(apiMessages)
+          } catch (error) {
+            console.error('Error refreshing messages:', error)
+          }
+        }
+        fetchMessages()
+      }, 1000)
+    } catch (error: any) {
+      console.error('❌ Error sending message via API:', error)
+      alert(`Failed to send message: ${error.response?.data?.error || error.message || 'Unknown error'}`)
+      
+      // Keep the optimistic message but show an error
+      // Still save to localStorage as fallback
+      try {
+        const baseKey = CHAT_MESSAGES_KEY
+        const existingMessages = JSON.parse(localStorage.getItem(baseKey) || '[]') || []
+        const exists = existingMessages.some((m: ChatMessage) => m.id === optimisticMessage.id)
+        if (!exists) {
+          localStorage.setItem(baseKey, JSON.stringify([...existingMessages, optimisticMessage]))
+        }
+      } catch (saveError) {
+        console.error('Error saving message to localStorage:', saveError)
+      }
     }
   }
 
