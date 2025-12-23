@@ -793,10 +793,15 @@ const RoomDetails = () => {
                           
                           {/* Message bubble */}
                           <div className={`flex flex-col ${msg.isOwn ? 'items-end' : 'items-start'} max-w-[65%] sm:max-w-[70%]`}>
-                            {/* Sender name for received messages (only if showing avatar) */}
-                            {!msg.isOwn && showAvatar && (
-                              <span className="text-xs text-gray-600 dark:text-gray-400 mb-0.5 px-1">
+                            {/* Sender name - always show for clarity */}
+                            {!msg.isOwn && (
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5 px-1">
                                 {msg.sender || 'Unknown'}
+                              </span>
+                            )}
+                            {msg.isOwn && (
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5 px-1">
+                                {user?.name || 'You'}
                               </span>
                             )}
                             
