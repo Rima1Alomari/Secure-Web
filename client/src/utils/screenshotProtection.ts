@@ -1,4 +1,4 @@
-import { auditHelpers } from './audit'
+import { logAuditEvent } from './audit'
 
 export interface ScreenshotAttempt {
   id: string
@@ -57,6 +57,18 @@ export class ScreenshotProtection {
    */
   private preventKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
+      // Don't interfere with input fields, textareas, or contenteditable elements
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable ||
+        (target as HTMLElement).closest('input, textarea, [contenteditable]')
+      ) {
+        // Allow normal typing in input fields
+        return
+      }
+
       // Windows: Win + Shift + S, Print Screen, Alt + Print Screen
       // Mac: Cmd + Shift + 3/4, Cmd + Shift + Control + 3/4
       const isWindowsScreenshot = 
@@ -82,7 +94,7 @@ export class ScreenshotProtection {
    * Prevent right-click context menu (common screenshot method)
    */
   private preventRightClick() {
-    document.addEventListener('contextmenu', (e) => {
+    document.addEventListener('contextmenu', () => {
       // Allow right-click but monitor for screenshot tools
       // We'll detect actual screenshot attempts through other methods
     })
@@ -105,7 +117,7 @@ export class ScreenshotProtection {
    */
   private detectScreenshotAttempts() {
     // Monitor for clipboard operations that might be screenshots
-    document.addEventListener('copy', (e) => {
+    document.addEventListener('copy', () => {
       // Check if clipboard contains image data
       navigator.clipboard.read().then(clipboardItems => {
         clipboardItems.forEach(item => {
@@ -140,6 +152,17 @@ export class ScreenshotProtection {
    */
   private preventPrintScreen() {
     document.addEventListener('keydown', (e) => {
+      // Don't interfere with input fields
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable ||
+        (target as HTMLElement).closest('input, textarea, [contenteditable]')
+      ) {
+        return
+      }
+
       if (e.key === 'PrintScreen') {
         e.preventDefault()
         e.stopPropagation()
@@ -185,19 +208,15 @@ export class ScreenshotProtection {
     localStorage.setItem(SCREENSHOT_ATTEMPTS_KEY, JSON.stringify(attempts))
 
     // Log to audit system
-    auditHelpers.logAction({
-      action: 'screenshot_attempt',
-      resourceType: 'system',
-      resourceName: 'Screenshot Attempt',
-      resourceId: attempt.id,
-      success: false,
-      details: {
-        location: attempt.location,
-        method: attempt.method,
-        blocked: true,
-        message: `Screenshot attempt detected and blocked at ${attempt.location}`
-      }
-    })
+    logAuditEvent(
+      'access',
+      'system',
+      attempt.id,
+      'Screenshot Attempt',
+      false,
+      undefined,
+      `Screenshot attempt detected and blocked at ${attempt.location} (method: ${attempt.method})`
+    )
 
     // Dispatch custom event for real-time alert updates
     window.dispatchEvent(new CustomEvent('screenshot-attempt', { detail: attempt }))

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaChevronDown, FaUsers, FaUserFriends, FaSearch, FaLink, FaCheck, FaTimesCircle, FaCalendarCheck } from 'react-icons/fa'
+import { FaPlus, FaCalendarAlt, FaClock, FaMapMarkerAlt, FaEdit, FaTrash, FaTimes, FaVideo, FaChevronDown, FaUsers, FaUserFriends, FaSearch, FaLink, FaCheck, FaTimesCircle, FaCalendarCheck, FaExclamationTriangle } from 'react-icons/fa'
 import { Modal, Toast, ConfirmDialog } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { EVENTS_KEY, ADMIN_USERS_KEY, ROOMS_KEY } from '../data/keys'
@@ -42,6 +42,7 @@ const Calendar = () => {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
   const [showNewDropdown, setShowNewDropdown] = useState(false)
+  const [isDateLocked, setIsDateLocked] = useState(false)
   const [eventType, setEventType] = useState<'meeting' | 'event'>('meeting')
   const [inviteUserSearch, setInviteUserSearch] = useState('')
   const [invitedUsers, setInvitedUsers] = useState<string[]>([])
@@ -53,7 +54,13 @@ const Calendar = () => {
   const [newEvent, setNewEvent] = useState({
     title: '',
     description: '',
-    date: new Date().toISOString().split('T')[0],
+    date: (() => {
+      const today = new Date()
+      const year = today.getFullYear()
+      const month = String(today.getMonth() + 1).padStart(2, '0')
+      const day = String(today.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    })(),
     from: '09:00',
     to: '10:00',
     location: '',
@@ -142,12 +149,13 @@ const Calendar = () => {
   const handleCreateMeeting = () => {
     setEventType('meeting')
     setShowNewDropdown(false)
+    setIsDateLocked(false) // Allow date change when opened from +New button
     setShowCreateModal(true)
     // Reset form
     setNewEvent({
       title: '',
       description: '',
-      date: new Date().toISOString().split('T')[0],
+      date: formatDateLocal(new Date()),
       from: '09:00',
       to: '10:00',
       location: '',
@@ -166,12 +174,13 @@ const Calendar = () => {
   const handleCreateEvent = () => {
     setEventType('event')
     setShowNewDropdown(false)
+    setIsDateLocked(false) // Allow date change when opened from +New button
     setShowCreateModal(true)
     // Reset form
     setNewEvent({
       title: '',
       description: '',
-      date: new Date().toISOString().split('T')[0],
+      date: formatDateLocal(new Date()),
       from: '09:00',
       to: '10:00',
       location: '',
@@ -197,9 +206,31 @@ const Calendar = () => {
     const selectedDate = new Date(newEvent.date)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    selectedDate.setHours(0, 0, 0, 0)
     
     if (selectedDate < today) {
-      setToast({ message: 'Cannot create events in the past', type: 'error' })
+      setToast({ message: 'Cannot create meetings in the past. Please select today or a future date.', type: 'error' })
+      return
+    }
+
+    // Validate that date is not Friday or Saturday (weekends are off days)
+    if (isWeekend(selectedDate)) {
+      setToast({ message: 'Fridays and Saturdays are off days. Meetings cannot be scheduled on these days.', type: 'error' })
+      return
+    }
+
+    // Check for time conflicts with existing meetings
+    const existingMeetings = getEventsForDate(selectedDate)
+    const hasConflict = existingMeetings.some(meeting => {
+      const meetingFrom = meeting.from || meeting.time.split(' - ')[0] || '00:00'
+      const meetingTo = meeting.to || meeting.time.split(' - ')[1] || '23:59'
+      
+      // Check if times overlap
+      return (newEvent.from < meetingTo && newEvent.to > meetingFrom)
+    })
+
+    if (hasConflict) {
+      setToast({ message: 'This time conflicts with an existing meeting. Please choose a different time.', type: 'error' })
       return
     }
 
@@ -216,11 +247,8 @@ const Calendar = () => {
       }
     }
 
-    // Auto-generate meeting link if online and not provided
-    let meetingLink = newEvent.meetingLink
-    if (newEvent.isOnline && !meetingLink) {
-      meetingLink = `https://meet.secure-web.com/${uuid().substring(0, 8)}`
-    }
+    // Don't auto-generate meeting links - removed per user request
+    const meetingLink = undefined
 
     const roomId = (location.state as any)?.roomId || (newEvent as any).roomId
     const event: Event = {
@@ -283,7 +311,7 @@ const Calendar = () => {
     setNewEvent({
       title: '',
       description: '',
-      date: new Date().toISOString().split('T')[0],
+      date: formatDateLocal(new Date()),
       from: '09:00',
       to: '10:00',
       location: '',
@@ -301,10 +329,20 @@ const Calendar = () => {
   }
 
   const handleDeleteEvent = (eventId: string) => {
-    setEvents(events.filter(e => e.id !== eventId))
+    const updatedEvents = events.filter(e => e.id !== eventId)
+    setEvents(updatedEvents)
+    
+    // Immediately update localStorage to sync with Dashboard
+    const allEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
+    const updatedStorageEvents = allEvents.filter(e => e.id !== eventId)
+    setJSON(EVENTS_KEY, updatedStorageEvents)
+    
     setToast({ message: 'Event deleted', type: 'success' })
     setShowEventDetailsModal(false)
     setSelectedEvent(null)
+    
+    // Trigger a custom event to notify Dashboard to refresh
+    window.dispatchEvent(new CustomEvent('events-updated'))
   }
 
   const handleEditEvent = () => {
@@ -316,8 +354,8 @@ const Calendar = () => {
       title: selectedEvent.title,
       description: selectedEvent.description,
       date: selectedEvent.date instanceof Date 
-        ? selectedEvent.date.toISOString().split('T')[0] 
-        : new Date(selectedEvent.date).toISOString().split('T')[0],
+        ? formatDateLocal(selectedEvent.date)
+        : formatDateLocal(new Date(selectedEvent.date)),
       from: selectedEvent.from || selectedEvent.time.split(' - ')[0] || '09:00',
       to: selectedEvent.to || selectedEvent.time.split(' - ')[1] || '10:00',
       location: selectedEvent.location || '',
@@ -331,6 +369,7 @@ const Calendar = () => {
     })
     setInvitedUsers((selectedEvent.sharedWith || []) as string[])
     setInvitedGroup((selectedEvent as any).invitedGroup || '')
+    setIsDateLocked(false) // Allow date change when editing
     setShowEventDetailsModal(false)
     setShowCreateModal(true)
     setSelectedEvent(null)
@@ -355,6 +394,27 @@ const Calendar = () => {
       return
     }
 
+    // Validate that date is not Friday or Saturday (weekends are off days)
+    if (isWeekend(selectedDate)) {
+      setToast({ message: 'Fridays and Saturdays are off days. Meetings cannot be scheduled on these days.', type: 'error' })
+      return
+    }
+
+    // Check for time conflicts with existing meetings (excluding the event being edited)
+    const existingMeetings = getEventsForDate(selectedDate).filter(e => e.id !== selectedEvent.id)
+    const hasConflict = existingMeetings.some(meeting => {
+      const meetingFrom = meeting.from || meeting.time.split(' - ')[0] || '00:00'
+      const meetingTo = meeting.to || meeting.time.split(' - ')[1] || '23:59'
+      
+      // Check if times overlap
+      return (newEvent.from < meetingTo && newEvent.to > meetingFrom)
+    })
+
+    if (hasConflict) {
+      setToast({ message: 'This time conflicts with an existing meeting. Please choose a different time.', type: 'error' })
+      return
+    }
+
     // Validate time is not in the past if date is today
     if (selectedDate.toDateString() === today.toDateString()) {
       const now = new Date()
@@ -369,14 +429,13 @@ const Calendar = () => {
       }
     }
 
-    // Auto-generate meeting link if online and not provided
-    let meetingLink = newEvent.meetingLink
-    if (newEvent.isOnline && !meetingLink) {
-      meetingLink = `https://meet.secure-web.com/${uuid().substring(0, 8)}`
-    }
+    // Don't auto-generate meeting links - removed per user request
+    const meetingLink = undefined
 
-    const updatedEvent: Event = {
+    // Create new event with updated data (delete old, add new)
+    const editedEvent: Event = {
       ...selectedEvent,
+      id: selectedEvent.id, // Keep same ID
       title: newEvent.title,
       description: newEvent.description,
       date: new Date(newEvent.date),
@@ -396,14 +455,25 @@ const Calendar = () => {
       type: eventType // Preserve type
     } as any
 
-    setEvents(events.map(e => e.id === selectedEvent.id ? updatedEvent : e))
-    setToast({ message: `${eventType === 'meeting' ? 'Meeting' : 'Event'} updated successfully`, type: 'success' })
+    // Delete the old event and add the edited one
+    const updatedEvents = events.filter(e => e.id !== selectedEvent.id)
+    setEvents([...updatedEvents, editedEvent])
+    
+    // Update localStorage immediately
+    const allEvents = getJSON<Event[]>(EVENTS_KEY, []) || []
+    const updatedStorageEvents = allEvents.filter(e => e.id !== selectedEvent.id)
+    setJSON(EVENTS_KEY, [...updatedStorageEvents, editedEvent])
+    
+    // Trigger event update for Dashboard
+    window.dispatchEvent(new CustomEvent('events-updated'))
+    
+    setToast({ message: `${eventType === 'meeting' ? 'Meeting' : 'Event'} edited successfully`, type: 'success' })
     setShowCreateModal(false)
     setSelectedEvent(null)
     setNewEvent({
       title: '',
       description: '',
-      date: new Date().toISOString().split('T')[0],
+      date: formatDateLocal(new Date()),
       from: '09:00',
       to: '10:00',
       location: '',
@@ -419,36 +489,52 @@ const Calendar = () => {
     setInvitedGroup('')
   }
 
+  // Check if a date is Friday (5) or Saturday (6) - weekends are off days
+  const isWeekend = (date: Date) => {
+    const dayOfWeek = date.getDay()
+    return dayOfWeek === 5 || dayOfWeek === 6 // Friday = 5, Saturday = 6
+  }
+
+  // Check if a date is in the past (before today)
+  const isPastDate = (date: Date) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const checkDate = new Date(date)
+    checkDate.setHours(0, 0, 0, 0)
+    return checkDate < today
+  }
+
+  // Check if a date is disabled (past date or weekend)
+  const isDateDisabled = (date: Date) => {
+    return isPastDate(date) || isWeekend(date)
+  }
+
+  // Format date to YYYY-MM-DD in local timezone (not UTC)
+  const formatDateLocal = (date: Date): string => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
   const handleDateClick = (date: Date) => {
+    // Don't allow clicking on past dates
+    if (isPastDate(date)) {
+      setToast({ message: 'Cannot create meetings in the past. Please select today or a future date.', type: 'warning' })
+      return
+    }
+    
+    // Don't allow clicking on weekends (Fridays and Saturdays)
+    if (isWeekend(date)) {
+      setToast({ message: 'Fridays and Saturdays are off days. Meetings cannot be scheduled on these days.', type: 'warning' })
+      return
+    }
+    
     setSelectedDate(date)
-    const dayEvents = getEventsForDate(date)
     
     // Always show the events bar when clicking a day
+    // User can view existing meetings and add more from the sidebar
     setShowDayEventsBar(true)
-    
-    // If no events and admin, also open create modal
-    if (dayEvents.length === 0 && isAdmin) {
-      setEventType('event') // Default to event when clicking date
-      // Reset form to default state (don't preserve stale values)
-      setNewEvent({
-        title: '',
-        description: '',
-        date: date.toISOString().split('T')[0],
-        from: '09:00',
-        to: '10:00',
-        location: '',
-        showAs: 'busy',
-        sharedWith: [],
-        color: '#3B82F6',
-        isOnline: false,
-        meetingLink: '',
-        isRecurring: false,
-        recurrenceType: 'none'
-      })
-      setInvitedUsers([])
-      setInvitedGroup('')
-      setShowCreateModal(true)
-    }
   }
 
   const handleEventClick = (event: Event) => {
@@ -552,7 +638,7 @@ const Calendar = () => {
               else if (day === 1) score += 5 // Tomorrow gets small bonus
               
               suggestions.push({
-                date: checkDate.toISOString().split('T')[0],
+                date: formatDateLocal(checkDate),
                 time: `${slotStart} - ${slotEnd}`,
                 score: score
               })
@@ -990,14 +1076,28 @@ const Calendar = () => {
                           return (
                             <td
                               key={dayIndex}
+                              onClick={() => date && !isDateDisabled(date) && handleDateClick(date)}
                               className={`p-1.5 border border-gray-200 dark:border-gray-700 align-top relative overflow-hidden ${
                                 isOutside ? 'opacity-50 bg-gray-50 dark:bg-gray-900/30' : ''
                               } ${
                                 date && !isOutside && isToday(date) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                               } ${
                                 date && selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
+                              } ${
+                                date && isDateDisabled(date) && !isOutside ? 'bg-gray-100 dark:bg-gray-800/50 cursor-not-allowed' : ''
+                              } ${
+                                date && !isDateDisabled(date) && !isOutside ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50' : ''
                               }`}
                               style={{ height: '120px', width: '14.28%', verticalAlign: 'top' }}
+                              title={
+                                date ? (
+                                  isPastDate(date) 
+                                    ? 'Cannot create meetings in the past' 
+                                    : isWeekend(date) 
+                                    ? 'Fridays and Saturdays are off days' 
+                                    : 'Click to view or add meetings'
+                                ) : ''
+                              }
                             >
                               {date && (
                                 <>
@@ -1007,10 +1107,11 @@ const Calendar = () => {
                                       {formatOutsideMonthLabel(date)}
                                     </div>
                                   )}
-                                  <button
-                                    onClick={() => handleDateClick(date)}
-                                    className={`absolute top-1 left-1.5 text-left z-10 ${
-                                      isToday(date) && !isOutside
+                                  <div
+                                    className={`absolute top-1 left-1.5 text-left z-10 pointer-events-none ${
+                                      isDateDisabled(date)
+                                        ? 'text-gray-400 dark:text-gray-600 opacity-50'
+                                        : isToday(date) && !isOutside
                                         ? 'font-bold text-blue-600 dark:text-blue-400'
                                         : isOutside
                                         ? 'text-gray-500 dark:text-gray-500'
@@ -1019,110 +1120,51 @@ const Calendar = () => {
                                     style={{ fontSize: '14px' }}
                                   >
                                     {date.getDate()}
-                                  </button>
+                                  </div>
                                 </>
                               )}
                               {date && dayEvents.length > 0 && (
-                                <div className="space-y-0.5 absolute top-7 left-1.5 right-1.5 bottom-1.5 overflow-hidden">
-                                  {(() => {
-                                    const organizedEvents = organizeOverlappingEvents(dayEvents)
-                                    const eventGroups: typeof organizedEvents[] = []
-                                    const processed = new Set<string>()
-                                    
-                                    organizedEvents.forEach(event => {
-                                      if (processed.has(event.id)) return
+                                <div 
+                                  className="absolute top-7 left-1 right-1 bottom-1 overflow-hidden pointer-events-none"
+                                >
+                                  <div className="grid grid-cols-3 gap-0.5 h-full">
+                                    {dayEvents.slice(0, 9).map((event) => {
+                                      const eventColor = (event as any).color || '#3B82F6'
+                                      const finished = isEventFinished(event)
+                                      // Truncate name to fit in small square (max 4-5 chars)
+                                      const shortName = event.title.length > 4 
+                                        ? event.title.substring(0, 4) + '...' 
+                                        : event.title
                                       
-                                      const group: typeof organizedEvents = [event]
-                                      processed.add(event.id)
-                                      
-                                      organizedEvents.forEach(otherEvent => {
-                                        if (!processed.has(otherEvent.id) && eventsOverlap(event, otherEvent)) {
-                                          group.push(otherEvent)
-                                          processed.add(otherEvent.id)
-                                        }
-                                      })
-                                      
-                                      eventGroups.push(group)
-                                    })
-                                    
-                                    return (
-                                      <>
-                                        {eventGroups.slice(0, 2).map((group, groupIndex) => {
-                                          if (group.length === 1) {
-                                            const event = group[0]
-                                            const eventColor = (event as any).color || '#3B82F6'
-                                            const finished = isEventFinished(event)
-                                            return (
-                                              <button
-                                                key={event.id}
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  handleEventClick(event)
-                                                }}
-                                                className={`w-full px-1.5 py-0.5 rounded truncate ${
-                                                  isOutside ? 'opacity-60' : ''
-                                                }`}
-                                                style={{
-                                                  backgroundColor: `${eventColor}15`,
-                                                  color: eventColor,
-                                                  borderLeft: `3px solid ${getBorderColor(eventColor, isDark)}`,
-                                                  textDecoration: finished ? 'line-through' : 'none',
-                                                  opacity: finished ? (isOutside ? 0.4 : 0.6) : (isOutside ? 0.6 : 1),
-                                                  fontSize: '11px',
-                                                  fontWeight: '500',
-                                                  height: '20px',
-                                                  lineHeight: '20px'
-                                                }}
-                                                title={event.title}
-                                              >
-                                                {event.title}
-                                              </button>
-                                            )
-                                          } else {
-                                            return (
-                                              <div key={`group-${groupIndex}`} className="flex gap-0.5">
-                                                {group.map(event => {
-                                                  const eventColor = (event as any).color || '#3B82F6'
-                                                  const finished = isEventFinished(event)
-                                                  return (
-                                                    <button
-                                                      key={event.id}
-                                                      onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        handleEventClick(event)
-                                                      }}
-                                                      className={`flex-1 px-1.5 py-0.5 rounded truncate ${
-                                                        isOutside ? 'opacity-60' : ''
-                                                      }`}
-                                                      style={{
-                                                        backgroundColor: `${eventColor}15`,
-                                                        color: eventColor,
-                                                        borderLeft: `3px solid ${getBorderColor(eventColor, isDark)}`,
-                                                        textDecoration: finished ? 'line-through' : 'none',
-                                                        opacity: finished ? (isOutside ? 0.4 : 0.6) : (isOutside ? 0.6 : 1),
-                                                        fontSize: '11px',
-                                                        fontWeight: '500',
-                                                        height: '20px',
-                                                        lineHeight: '20px'
-                                                      }}
-                                                      title={event.title}
-                                                    >
-                                                      {event.title}
-                                                    </button>
-                                                  )
-                                                })}
-                                              </div>
-                                            )
-                                          }
-                                        })}
-                                        {dayEvents.length > 2 && (
-                                          <div className={`text-[10px] px-1 mt-0.5 ${isOutside ? 'text-gray-400 dark:text-gray-600' : 'text-gray-500 dark:text-gray-500'}`}>
-                                            +{dayEvents.length - 2}
-                                          </div>
-                                        )}
-                                      </>
-                                    )
-                                  })()}
+                                      return (
+                                        <div
+                                          key={event.id}
+                                          className={`aspect-square rounded flex items-center justify-center text-center p-0.5 ${
+                                            isOutside ? 'opacity-60' : ''
+                                          }`}
+                                          style={{
+                                            backgroundColor: `${eventColor}20`,
+                                            color: eventColor,
+                                            border: `1.5px solid ${getBorderColor(eventColor, isDark)}`,
+                                            textDecoration: finished ? 'line-through' : 'none',
+                                            opacity: finished ? (isOutside ? 0.4 : 0.6) : (isOutside ? 0.6 : 1),
+                                            fontSize: '9px',
+                                            fontWeight: '600',
+                                            minWidth: '0',
+                                            minHeight: '0'
+                                          }}
+                                          title={event.title}
+                                        >
+                                          <span className="truncate w-full leading-tight">{shortName}</span>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                  {dayEvents.length > 9 && (
+                                    <div className={`absolute bottom-0 left-0 right-0 text-center text-[9px] px-1 py-0.5 ${isOutside ? 'text-gray-400 dark:text-gray-600' : 'text-gray-500 dark:text-gray-500'}`} style={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', backdropFilter: 'blur(2px)' }}>
+                                      +{dayEvents.length - 9} more
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -1146,13 +1188,23 @@ const Calendar = () => {
                       <button
                         key={index}
                         onClick={() => handleDateClick(date)}
+                        disabled={isDateDisabled(date)}
                         className={`p-3 text-center border-r border-gray-200 dark:border-gray-700 transition-colors ${
-                          isToday(date)
+                          isDateDisabled(date)
+                            ? 'bg-gray-100 dark:bg-gray-800/50 opacity-50 cursor-not-allowed'
+                            : isToday(date)
                             ? 'bg-blue-50 dark:bg-blue-900/20'
                             : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
                         } ${
                           selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
                         }`}
+                        title={
+                          isPastDate(date) 
+                            ? 'Cannot create meetings in the past' 
+                            : isWeekend(date) 
+                            ? 'Fridays and Saturdays are off days' 
+                            : ''
+                        }
                       >
                         <div className={`text-xs font-medium mb-1 ${
                           isToday(date)
@@ -1392,10 +1444,11 @@ const Calendar = () => {
             isOpen={showCreateModal}
             onClose={() => {
               setShowCreateModal(false)
+              setIsDateLocked(false)
               setNewEvent({
                 title: '',
                 description: '',
-                date: new Date().toISOString().split('T')[0],
+                date: formatDateLocal(new Date()),
                 from: '09:00',
                 to: '10:00',
                 location: '',
@@ -1485,24 +1538,6 @@ const Calendar = () => {
                 </button>
               </div>
 
-              {/* Meeting Link (when Online is on) */}
-              {newEvent.isOnline && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Meeting Link
-                  </label>
-                  <div className="relative">
-                    <FaLink className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" />
-                    <input
-                      type="text"
-                      value={newEvent.meetingLink}
-                      onChange={(e) => setNewEvent({ ...newEvent, meetingLink: e.target.value })}
-                      className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                      placeholder="https://meet.secure-web.com/abc123 (auto-generated if empty)"
-                    />
-                  </div>
-                </div>
-              )}
               {/* Best Time Suggestions */}
               {eventType === 'meeting' && !selectedEvent && (
                 <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-xl border-2 border-green-200 dark:border-green-800">
@@ -1657,15 +1692,129 @@ const Calendar = () => {
                 <input
                   type="date"
                   value={newEvent.date}
-                  onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
-                  min={new Date().toISOString().split('T')[0]}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  onChange={(e) => {
+                    const selectedDate = new Date(e.target.value)
+                    // Check if selected date is in the past
+                    if (isPastDate(selectedDate)) {
+                      setToast({ message: 'Cannot create meetings in the past. Please select today or a future date.', type: 'warning' })
+                      return
+                    }
+                    // Check if selected date is Friday or Saturday
+                    if (isWeekend(selectedDate)) {
+                      setToast({ message: 'Fridays and Saturdays are off days. Please select a different date.', type: 'warning' })
+                      return
+                    }
+                    setNewEvent({ ...newEvent, date: e.target.value })
+                  }}
+                  disabled={isDateLocked}
+                  min={formatDateLocal(new Date())}
+                  className={`w-full px-4 py-3 border-2 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all ${
+                    isDateLocked
+                      ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 cursor-not-allowed'
+                      : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600'
+                  }`}
                   required
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Cannot select past dates
+                  {isDateLocked 
+                    ? 'Date is locked to the selected day. Use the +New button to create meetings for different dates.'
+                    : 'Only today and future dates are available. Fridays and Saturdays are off days.'}
                 </p>
               </div>
+
+              {/* Existing Meetings for Selected Date */}
+              {(() => {
+                const selectedDateObj = new Date(newEvent.date)
+                const existingMeetings = getEventsForDate(selectedDateObj)
+                  .filter(e => !selectedEvent || e.id !== selectedEvent.id) // Exclude the event being edited
+                  .sort((a, b) => {
+                    const timeA = a.from || a.time.split(' - ')[0] || '00:00'
+                    const timeB = b.from || b.time.split(' - ')[0] || '00:00'
+                    return timeA.localeCompare(timeB)
+                  })
+
+                // Check for time conflicts
+                const hasConflict = existingMeetings.some(meeting => {
+                  const meetingFrom = meeting.from || meeting.time.split(' - ')[0] || '00:00'
+                  const meetingTo = meeting.to || meeting.time.split(' - ')[1] || '23:59'
+                  const newFrom = newEvent.from
+                  const newTo = newEvent.to
+                  
+                  // Check if times overlap
+                  return (newFrom < meetingTo && newTo > meetingFrom)
+                })
+
+                if (existingMeetings.length > 0) {
+                  return (
+                    <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border-2 border-blue-200 dark:border-blue-800">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FaCalendarAlt className="text-blue-600 dark:text-blue-400" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white text-sm">
+                          Existing Meetings for {selectedDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                        </h4>
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {existingMeetings.map((meeting) => {
+                          const meetingColor = (meeting as any).color || '#3B82F6'
+                          const meetingFrom = meeting.from || meeting.time.split(' - ')[0] || '00:00'
+                          const meetingTo = meeting.to || meeting.time.split(' - ')[1] || '23:59'
+                          
+                          // Check if this meeting conflicts with the new time
+                          const conflicts = newEvent.from && newEvent.to && 
+                            (newEvent.from < meetingTo && newEvent.to > meetingFrom)
+                          
+                          return (
+                            <div
+                              key={meeting.id}
+                              className={`p-3 rounded-lg border-2 ${
+                                conflicts
+                                  ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700'
+                                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1">
+                                  <div className="font-semibold text-gray-900 dark:text-white text-sm mb-1">
+                                    {meeting.title}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                    <FaClock className="text-blue-600 dark:text-blue-400" />
+                                    <span>{meetingFrom} - {meetingTo}</span>
+                                  </div>
+                                  {meeting.location && (
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500 mt-1">
+                                      <FaMapMarkerAlt />
+                                      <span>{meeting.location}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div
+                                  className="w-4 h-4 rounded-full flex-shrink-0"
+                                  style={{ backgroundColor: meetingColor }}
+                                  title={`Color: ${meetingColor}`}
+                                />
+                              </div>
+                              {conflicts && (
+                                <div className="mt-2 text-xs text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
+                                  <FaExclamationTriangle /> Time conflict!
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {hasConflict && (
+                        <div className="mt-3 p-2 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg">
+                          <p className="text-xs text-red-700 dark:text-red-300 font-medium flex items-center gap-2">
+                            <FaExclamationTriangle /> Warning: Your selected time conflicts with an existing meeting. Please choose a different time.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+                return null
+              })()}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                   Location
@@ -1826,7 +1975,7 @@ const Calendar = () => {
                     setNewEvent({
                       title: '',
                       description: '',
-                      date: new Date().toISOString().split('T')[0],
+                      date: formatDateLocal(new Date()),
                       from: '09:00',
                       to: '10:00',
                       location: '',
@@ -1923,7 +2072,7 @@ const Calendar = () => {
                   setNewEvent({
                     title: '',
                     description: '',
-                    date: selectedDate.toISOString().split('T')[0],
+                    date: formatDateLocal(selectedDate),
                     from: '09:00',
                     to: '10:00',
                     location: '',
@@ -1937,6 +2086,7 @@ const Calendar = () => {
                   })
                   setInvitedUsers([])
                   setInvitedGroup('')
+                  setIsDateLocked(true) // Lock date when adding event to specific day
                   setShowCreateModal(true)
                 }}
                 className="w-full btn-primary"
@@ -2124,16 +2274,15 @@ const Calendar = () => {
             </div>
             
             {/* Footer - Add Event Button */}
-            {isAdmin && (
+            {isAdmin && !isPastDate(selectedDate) && !isWeekend(selectedDate) && (
               <div className="p-4 border-t border-gray-200 dark:border-gray-700">
                 <button
                   onClick={() => {
-                    setShowDayEventsBar(false)
                     setEventType('event')
                     setNewEvent({
                       title: '',
                       description: '',
-                      date: selectedDate.toISOString().split('T')[0],
+                      date: formatDateLocal(selectedDate),
                       from: '09:00',
                       to: '10:00',
                       location: '',
@@ -2147,12 +2296,23 @@ const Calendar = () => {
                     })
                     setInvitedUsers([])
                     setInvitedGroup('')
+                    setIsDateLocked(true) // Lock date when adding event to specific day
                     setShowCreateModal(true)
+                    // Keep sidebar open so user can see the new event after creating
                   }}
-                  className="w-full btn-primary"
+                  className="w-full btn-primary flex items-center justify-center gap-2"
                 >
-                  <FaPlus className="inline mr-2" /> Add Event
+                  <FaPlus /> Add Event
                 </button>
+              </div>
+            )}
+            {isAdmin && (isPastDate(selectedDate) || isWeekend(selectedDate)) && (
+              <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                  {isPastDate(selectedDate) 
+                    ? 'Cannot add meetings to past dates'
+                    : 'Fridays and Saturdays are off days'}
+                </p>
               </div>
             )}
             </div>

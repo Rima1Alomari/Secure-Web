@@ -1,12 +1,14 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { FaUsers, FaCog, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV, FaExclamationTriangle, FaDownload, FaPalette, FaCheckCircle, FaUpload, FaTimes } from 'react-icons/fa'
+import { FaUsers, FaSearch, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight, FaEllipsisV } from 'react-icons/fa'
 import TableSkeleton from '../components/TableSkeleton'
 import { Modal, Toast } from '../components/common'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { ADMIN_USERS_KEY, SECURITY_LOGS_KEY, FILES_KEY, SECURITY_SETTINGS_KEY, EVENTS_KEY } from '../data/keys'
 import { AdminUserMock, SecurityLog } from '../types/models'
 import { subscribeToUsers, saveUser, deleteUser } from '../services/firestore'
+import axios from 'axios'
+import { getToken } from '../utils/auth'
 
 const Administration = () => {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -14,15 +16,15 @@ const Administration = () => {
   
   // Validate tab parameter and redirect invalid ones
   useEffect(() => {
-    if (tabParam && tabParam !== 'teams' && tabParam !== 'settings') {
+    if (tabParam && tabParam !== 'teams') {
       setSearchParams({ tab: 'teams' })
       setActiveTab('teams')
-    } else if (tabParam === 'teams' || tabParam === 'settings') {
-      setActiveTab(tabParam)
+    } else if (tabParam === 'teams') {
+      setActiveTab('teams')
     }
   }, [tabParam, setSearchParams])
   
-  const [activeTab, setActiveTab] = useState<'teams' | 'settings'>('teams')
+  const [activeTab, setActiveTab] = useState<'teams'>('teams')
   const [backendConnected] = useState(false) // Demo mode
   const [selectedRowMenu, setSelectedRowMenu] = useState<string | null>(null)
   const actionMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
@@ -31,117 +33,74 @@ const Administration = () => {
   const [showEditUserModal, setShowEditUserModal] = useState(false)
   const [editingUser, setEditingUser] = useState<AdminUserMock | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
-  const [themeSettings, setThemeSettings] = useState(() => {
-    const saved = getJSON<{ logoColor: string; sidebarColor: string; logoUrl?: string }>('admin-theme-settings', null)
-    return saved || { logoColor: 'blue', sidebarColor: 'blue', logoUrl: undefined }
-  })
-  
-  const [logoPreview, setLogoPreview] = useState<string | null>(themeSettings.logoUrl || null)
   
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
+    password: '',
     role: 'User' as AdminUserMock['role'],
     status: 'Active' as AdminUserMock['status']
   })
 
-  const tabs = [
-    { id: 'teams', label: 'Teams', icon: FaUsers },
-    { id: 'settings', label: 'Settings', icon: FaCog }
-  ]
-  
-  const handleTabChange = (tabId: 'teams' | 'settings') => {
-    setActiveTab(tabId)
-    setSearchParams({ tab: tabId })
-  }
-  
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    
-    // Validate file type
-    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml']
-    if (!validTypes.includes(file.type)) {
-      setToast({ message: 'Invalid file type. Please upload PNG, JPG, or SVG.', type: 'error' })
-      return
-    }
-    
-    // Validate file size (max 2MB)
-    const maxSize = 2 * 1024 * 1024 // 2MB
-    if (file.size > maxSize) {
-      setToast({ message: 'File size exceeds 2MB limit.', type: 'error' })
-      return
-    }
-    
-    // Read file and convert to base64
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const base64String = reader.result as string
-      setLogoPreview(base64String)
-      const updatedSettings = { ...themeSettings, logoUrl: base64String }
-      setThemeSettings(updatedSettings)
-      setJSON('admin-theme-settings', updatedSettings)
-      // Dispatch custom event to update logo in Layout
-      window.dispatchEvent(new Event('logo-updated'))
-      setToast({ message: 'Logo uploaded successfully', type: 'success' })
-    }
-    reader.onerror = () => {
-      setToast({ message: 'Error reading file', type: 'error' })
-    }
-    reader.readAsDataURL(file)
-  }
-  
-  const handleRemoveLogo = () => {
-    setLogoPreview(null)
-    const updatedSettings = { ...themeSettings, logoUrl: undefined }
-    setThemeSettings(updatedSettings)
-    setJSON('admin-theme-settings', updatedSettings)
-    // Dispatch custom event to update logo in Layout
-    window.dispatchEvent(new Event('logo-updated'))
-    setToast({ message: 'Logo removed', type: 'info' })
-  }
 
-  // Load users from Firestore in real-time
+  // Load users from backend API (MongoDB)
   useEffect(() => {
     setIsLoading(true)
     
-    // Subscribe to users from Firestore
-    const unsubscribe = subscribeToUsers((firestoreUsers) => {
-      // Map Firestore users to AdminUserMock format
-      const mappedUsers: AdminUserMock[] = firestoreUsers.map((user: any) => ({
-        id: user.id,
-        name: user.name || user.email || 'Unknown',
-        email: user.email || '',
-        role: user.role === 'admin' ? 'Admin' : 'User',
-        status: user.isOnline ? 'Active' : (user.status || 'Active'),
-        createdAt: user.createdAt || user.createdAt?.toISOString() || nowISO(),
-        userId: user.id,
-        isOnline: user.isOnline || false
-      }))
-      
-      // If no users in Firestore, initialize with defaults
-      if (mappedUsers.length === 0) {
-        const defaultUsers: AdminUserMock[] = [
-          { id: uuid(), name: 'Ahmed', email: 'ahmed@example.com', role: 'Admin', status: 'Active', createdAt: nowISO(), userId: '#AD001' },
-          { id: uuid(), name: 'Ali', email: 'ali@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US001' },
-          { id: uuid(), name: 'Mohammed', email: 'mohammed@example.com', role: 'User', status: 'Active', createdAt: nowISO(), userId: '#US002' },
-        ]
-        // Save defaults to Firestore
-        defaultUsers.forEach(user => {
-          saveUser({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role.toLowerCase(),
-            isOnline: false
-          }).catch(console.error)
+    const fetchUsers = async () => {
+      try {
+        const token = getToken()
+        const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+        
+        // Fetch real users from MongoDB via API
+        const response = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
         })
-        setUsers(defaultUsers)
-      } else {
+        
+        if (response.data && response.data.length > 0) {
+          // Map API users to AdminUserMock format
+          const mappedUsers: AdminUserMock[] = response.data.map((u: any) => ({
+            id: u.id || u._id,
+            userId: u.userId || u.id,
+            name: u.name || 'Unknown',
+            email: u.email || '',
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: 'Active' as const,
+            createdAt: nowISO(),
+            isOnline: false
+          }))
+          setUsers(mappedUsers)
+        } else {
+          // No users found - show empty list (no default users)
+          setUsers([])
+        }
+      } catch (error) {
+        console.error('Error fetching users from API:', error)
+        // On error, show empty list instead of default users
+        setUsers([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    
+    fetchUsers()
+    
+    // Also subscribe to Firestore for real-time updates (if users exist there)
+    const unsubscribe = subscribeToUsers((firestoreUsers) => {
+      if (firestoreUsers.length > 0) {
+        // Only update if we have real users from Firestore
+        const mappedUsers: AdminUserMock[] = firestoreUsers.map((user: any) => ({
+          id: user.id,
+          name: user.name || user.email || 'Unknown',
+          email: user.email || '',
+          role: user.role === 'admin' ? 'Admin' : 'User',
+          status: user.isOnline ? 'Active' : (user.status || 'Active'),
+          createdAt: user.createdAt || user.createdAt?.toISOString() || nowISO(),
+          userId: user.id,
+          isOnline: user.isOnline || false
+        }))
         setUsers(mappedUsers)
       }
-      
-      setIsLoading(false)
     })
 
     return () => unsubscribe()
@@ -192,32 +151,61 @@ const Administration = () => {
   }, [filteredAndSortedUsers, currentPage])
 
   const handleAddUser = async () => {
-    if (!newUser.name.trim() || !newUser.email.trim()) {
+    if (!newUser.name.trim() || !newUser.email.trim() || !newUser.password.trim()) {
       setToast({ message: 'Please fill in all required fields', type: 'error' })
       return
     }
 
-    try {
-      const userId = uuid()
-      const userData = {
-        id: userId,
-        name: newUser.name.trim(),
-        email: newUser.email.trim(),
-        role: newUser.role.toLowerCase(),
-        isOnline: false,
-        status: newUser.status.toLowerCase()
-      }
+    if (newUser.password.length < 6) {
+      setToast({ message: 'Password must be at least 6 characters long', type: 'error' })
+      return
+    }
 
-      // Save to Firestore
-      await saveUser(userData)
+    try {
+      const token = getToken()
+      const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
       
-      setToast({ message: `User "${newUser.name}" added successfully`, type: 'success' })
-      setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
-      setShowAddUserModal(false)
-      // Users will update automatically via subscription
-    } catch (error) {
+      // Create user via backend API
+      const response = await axios.post(
+        `${API_URL}/auth/admin/users`,
+        {
+          name: newUser.name.trim(),
+          email: newUser.email.trim(),
+          password: newUser.password,
+          role: newUser.role.toLowerCase()
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+
+      if (response.data.user) {
+        setToast({ message: `User "${newUser.name}" added successfully`, type: 'success' })
+        setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
+        setShowAddUserModal(false)
+        
+        // Refresh users list
+        const usersResponse = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (usersResponse.data && usersResponse.data.length > 0) {
+          const mappedUsers: AdminUserMock[] = usersResponse.data.map((u: any) => ({
+            id: u.id || u._id,
+            userId: u.userId || u.id,
+            name: u.name || 'Unknown',
+            email: u.email || '',
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: 'Active' as const,
+            createdAt: nowISO(),
+            isOnline: false
+          }))
+          setUsers(mappedUsers)
+        }
+      }
+    } catch (error: any) {
       console.error('Error adding user:', error)
-      setToast({ message: 'Failed to add user. Please try again.', type: 'error' })
+      const errorMessage = error.response?.data?.error || 'Failed to add user. Please try again.'
+      setToast({ message: errorMessage, type: 'error' })
     }
   }
 
@@ -239,37 +227,92 @@ const Administration = () => {
     }
 
     try {
-      const userData = {
-        id: editingUser.id,
-        name: newUser.name.trim(),
-        email: newUser.email.trim(),
-        role: newUser.role.toLowerCase(),
-        status: newUser.status.toLowerCase()
-      }
-
-      // Update in Firestore
-      await saveUser(userData)
+      const token = getToken()
+      const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
       
-      setToast({ message: `User "${newUser.name}" updated successfully`, type: 'success' })
-      setShowEditUserModal(false)
-      setEditingUser(null)
-      setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
-      // Users will update automatically via subscription
-    } catch (error) {
+      // Update user via backend API
+      const response = await axios.put(
+        `${API_URL}/auth/admin/users/${editingUser.id}`,
+        {
+          name: newUser.name.trim(),
+          email: newUser.email.trim(),
+          role: newUser.role.toLowerCase()
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+
+      if (response.data.user) {
+        setToast({ message: `User "${newUser.name}" updated successfully`, type: 'success' })
+        setShowEditUserModal(false)
+        setEditingUser(null)
+        setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
+        
+        // Refresh users list
+        const usersResponse = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (usersResponse.data && usersResponse.data.length > 0) {
+          const mappedUsers: AdminUserMock[] = usersResponse.data.map((u: any) => ({
+            id: u.id || u._id,
+            userId: u.userId || u.id,
+            name: u.name || 'Unknown',
+            email: u.email || '',
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: 'Active' as const,
+            createdAt: nowISO(),
+            isOnline: false
+          }))
+          setUsers(mappedUsers)
+        }
+      }
+    } catch (error: any) {
       console.error('Error updating user:', error)
-      setToast({ message: 'Failed to update user. Please try again.', type: 'error' })
+      const errorMessage = error.response?.data?.error || 'Failed to update user. Please try again.'
+      setToast({ message: errorMessage, type: 'error' })
     }
   }
 
   const handleDeleteUser = async (user: AdminUserMock) => {
     if (window.confirm(`Are you sure you want to delete "${user.name}"?`)) {
       try {
-        await deleteUser(user.id)
+        const token = getToken()
+        const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+        
+        // Delete user via backend API
+        await axios.delete(
+          `${API_URL}/auth/admin/users/${user.id}`,
+          {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        )
+        
         setToast({ message: `User "${user.name}" deleted`, type: 'info' })
-        // Users will update automatically via subscription
-      } catch (error) {
+        
+        // Refresh users list
+        const usersResponse = await axios.get(`${API_URL}/auth/users`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (usersResponse.data && usersResponse.data.length > 0) {
+          const mappedUsers: AdminUserMock[] = usersResponse.data.map((u: any) => ({
+            id: u.id || u._id,
+            userId: u.userId || u.id,
+            name: u.name || 'Unknown',
+            email: u.email || '',
+            role: u.role === 'admin' ? 'Admin' : 'User',
+            status: 'Active' as const,
+            createdAt: nowISO(),
+            isOnline: false
+          }))
+          setUsers(mappedUsers)
+        } else {
+          setUsers([])
+        }
+      } catch (error: any) {
         console.error('Error deleting user:', error)
-        setToast({ message: 'Failed to delete user. Please try again.', type: 'error' })
+        const errorMessage = error.response?.data?.error || 'Failed to delete user. Please try again.'
+        setToast({ message: errorMessage, type: 'error' })
       }
     }
   }
@@ -306,7 +349,7 @@ const Administration = () => {
                 Administration
               </h1>
               <p className="page-subtitle">
-                Manage system and settings
+                Manage teams and users
               </p>
             </div>
           </div>
@@ -315,38 +358,9 @@ const Administration = () => {
         {/* System Status Strip */}
 
         <div className="card">
-          {/* Tabs */}
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <div className="flex overflow-x-auto">
-              {tabs.map((tab) => {
-                const Icon = tab.icon
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => handleTabChange(tab.id as 'teams' | 'settings')}
-                    className={`relative px-4 py-3 text-sm font-medium transition-all flex items-center gap-2 ${
-                      activeTab === tab.id
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                    }`}
-                  >
-                    <Icon /> {tab.label}
-                    {activeTab === tab.id && (
-                      <>
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 rounded-t-full"></div>
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400 opacity-50 blur-sm"></div>
-                      </>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
           {/* Tab Content */}
           <div className="p-6">
-            {activeTab === 'teams' && (
-              <div>
+            <div>
                 {isLoading ? (
                   <TableSkeleton rows={5} columns={5} />
                 ) : (
@@ -551,146 +565,6 @@ const Administration = () => {
                   </>
                 )}
               </div>
-            )}
-
-            {activeTab === 'settings' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-                  System Settings
-                </h2>
-                <div className="space-y-6">
-                  <div className="card">
-                    <div className="flex items-center gap-3 mb-4">
-                      <FaPalette className="text-blue-600 dark:text-blue-400 text-xl" />
-                      <h3 className="font-semibold text-gray-900 dark:text-white text-lg">
-                        Theme Customization
-                      </h3>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                      Customize logo and sidebar colors
-                    </p>
-                    
-                    <div className="space-y-4">
-                      {/* Upload Logo Section */}
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Upload Logo
-                        </label>
-                        <div className="space-y-3">
-                          {logoPreview ? (
-                            <div className="flex items-center gap-4">
-                              <div className="relative">
-                                <img 
-                                  src={logoPreview} 
-                                  alt="Logo preview" 
-                                  className="w-20 h-20 rounded-lg object-contain border-2 border-gray-200 dark:border-gray-700"
-                                />
-                              </div>
-                              <div className="flex-1">
-                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                                  Logo uploaded
-                                </p>
-                                <button
-                                  onClick={handleRemoveLogo}
-                                  className="btn-secondary text-sm flex items-center gap-2"
-                                >
-                                  <FaTimes /> Remove Logo
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <label className="cursor-pointer">
-                                <input
-                                  type="file"
-                                  accept="image/png,image/jpeg,image/jpg,image/svg+xml"
-                                  onChange={handleLogoUpload}
-                                  className="hidden"
-                                />
-                                <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors">
-                                  <FaUpload className="text-gray-400 dark:text-gray-500 text-2xl mx-auto mb-2" />
-                                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-                                    Click to upload or drag and drop
-                                  </p>
-                                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                                    PNG, JPG, SVG (max 2MB)
-                                  </p>
-                                </div>
-                              </label>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Logo Color
-                        </label>
-                        <div className="flex gap-2">
-                          {['blue', 'green', 'purple', 'red'].map(color => (
-                            <button
-                              key={color}
-                              onClick={() => {
-                                setThemeSettings(prev => ({ ...prev, logoColor: color }))
-                                setJSON('admin-theme-settings', { ...themeSettings, logoColor: color })
-                                setToast({ message: `Logo color changed to ${color}`, type: 'success' })
-                              }}
-                              className={`w-12 h-12 rounded-lg border-2 transition-all ${
-                                themeSettings.logoColor === color
-                                  ? 'border-blue-600 dark:border-blue-400 ring-2 ring-blue-500'
-                                  : 'border-gray-300 dark:border-gray-600'
-                              } ${
-                                color === 'blue' ? 'bg-blue-600' :
-                                color === 'green' ? 'bg-green-600' :
-                                color === 'purple' ? 'bg-purple-600' :
-                                'bg-red-600'
-                              }`}
-                              title={color.charAt(0).toUpperCase() + color.slice(1)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Sidebar Color
-                        </label>
-                        <div className="flex gap-2">
-                          {['blue', 'green', 'purple', 'red'].map(color => (
-                            <button
-                              key={color}
-                              onClick={() => {
-                                setThemeSettings(prev => ({ ...prev, sidebarColor: color }))
-                                setJSON('admin-theme-settings', { ...themeSettings, sidebarColor: color })
-                                setToast({ message: `Sidebar color changed to ${color}`, type: 'success' })
-                              }}
-                              className={`w-12 h-12 rounded-lg border-2 transition-all ${
-                                themeSettings.sidebarColor === color
-                                  ? 'border-blue-600 dark:border-blue-400 ring-2 ring-blue-500'
-                                  : 'border-gray-300 dark:border-gray-600'
-                              } ${
-                                color === 'blue' ? 'bg-blue-600' :
-                                color === 'green' ? 'bg-green-600' :
-                                color === 'purple' ? 'bg-purple-600' :
-                                'bg-red-600'
-                              }`}
-                              title={color.charAt(0).toUpperCase() + color.slice(1)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                      
-                      <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          <FaCheckCircle className="inline mr-1 text-blue-600 dark:text-blue-400" />
-                          Settings saved successfully
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
 
 
           </div>
@@ -701,7 +575,7 @@ const Administration = () => {
           isOpen={showAddUserModal}
           onClose={() => {
             setShowAddUserModal(false)
-            setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+            setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
           }}
           title="Add New User"
         >
@@ -763,7 +637,7 @@ const Administration = () => {
               <button
                 onClick={() => {
                   setShowAddUserModal(false)
-                  setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+                  setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
                 }}
                 className="btn-secondary flex-1"
               >
@@ -785,7 +659,7 @@ const Administration = () => {
           onClose={() => {
             setShowEditUserModal(false)
             setEditingUser(null)
-            setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
+            setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
           }}
           title="Edit User"
         >

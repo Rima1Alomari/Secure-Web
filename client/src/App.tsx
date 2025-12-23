@@ -15,6 +15,7 @@ import Recent from './pages/Recent'
 import TrashBin from './pages/TrashBin'
 import Administration from './pages/Administration'
 import AboutUs from './pages/AboutUs'
+import Profile from './pages/Profile'
 import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import { UserProvider } from './contexts/UserContext'
@@ -159,6 +160,16 @@ function App() {
                     element={
                       <ProtectedRoute allowedRoles={['admin']}>
                         <Administration />
+                      </ProtectedRoute>
+                    } 
+                  />
+                  
+                  {/* Profile (all authenticated users) */}
+                  <Route 
+                    path="/profile" 
+                    element={
+                      <ProtectedRoute allowedRoles={['user', 'admin']}>
+                        <Profile />
                       </ProtectedRoute>
                     } 
                   />

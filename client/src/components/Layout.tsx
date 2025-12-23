@@ -17,7 +17,8 @@ import {
   FaSun,
   FaUserCircle,
   FaChevronDown,
-  FaCircle
+  FaCircle,
+  FaUser
 } from 'react-icons/fa'
 import { removeToken, getToken } from '../utils/auth'
 import FloatingAIAssistant from './FloatingAIAssistant'
@@ -167,6 +168,7 @@ export default function Layout({ children, onLogout }: LayoutProps) {
     { path: '/recent', icon: FaClock, label: 'Recent', roles: ['user', 'admin'] as UserRole[] },
     { path: '/trash', icon: FaTrash, label: 'Trash', roles: ['admin'] as UserRole[] },
     { path: '/administration', icon: FaUserShield, label: 'Admin', roles: ['admin'] as UserRole[] },
+    { path: '/profile', icon: FaUser, label: 'Profile', roles: ['user', 'admin'] as UserRole[] },
   ]
 
   // Filter navigation items based on user role
@@ -290,7 +292,14 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                       className="p-1.5 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors duration-200"
                       aria-label="Account menu"
                     >
-                      <FaUserCircle className="h-5 w-5" />
+                      {(() => {
+                        const profileImg = user?.profileImage || (user?.id ? localStorage.getItem(`profile-image-${user.id}`) : null)
+                        return profileImg ? (
+                          <img src={profileImg} alt={user?.name || 'User'} className="h-5 w-5 rounded-full object-cover" />
+                        ) : (
+                          <FaUserCircle className="h-5 w-5" />
+                        )
+                      })()}
                     </button>
 
                     {/* Dropdown Menu - Mobile */}
@@ -299,8 +308,15 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                         {/* User Info Section */}
                         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20">
                           <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center flex-shrink-0">
-                              <FaUserCircle className="text-white text-xl" />
+                            <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
+                              {(() => {
+                                const profileImg = user?.profileImage || (user?.id ? localStorage.getItem(`profile-image-${user.id}`) : null)
+                                return profileImg ? (
+                                  <img src={profileImg} alt={user?.name || 'User'} className="w-full h-full object-cover" />
+                                ) : (
+                                  <FaUserCircle className="text-white text-xl" />
+                                )
+                              })()}
                             </div>
                             <div className="flex-1 min-w-0">
                               <h3 className="text-sm font-bold text-gray-900 dark:text-white truncate">
@@ -309,6 +325,11 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                               <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                                 {user?.email || 'No email'}
                               </p>
+                              {user?.department && (
+                                <p className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">
+                                  {user.department}
+                                </p>
+                              )}
                               <div className="mt-1">
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 capitalize">
                                   {role}
@@ -374,21 +395,8 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                           </div>
                         </div>
 
-                        {/* Settings and Logout */}
+                        {/* Logout */}
                         <div className="py-2 border-t border-gray-200 dark:border-gray-700">
-                          <button
-                            onClick={() => {
-                              setShowPasswordModal(true)
-                              setShowAccountMenu(false)
-                            }}
-                            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors flex items-center gap-3"
-                          >
-                            <FaCog className="text-gray-500 dark:text-gray-400" />
-                            <span>Settings</span>
-                          </button>
-                          
-                          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
                           <button
                             onClick={() => {
                               handleLogout()
@@ -433,7 +441,14 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                     className="flex items-center gap-2 p-1.5 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
                     aria-label="Account menu"
                   >
-                    <FaUserCircle className="h-6 w-6" />
+                    {(() => {
+                      const profileImg = user?.profileImage || (user?.id ? localStorage.getItem(`profile-image-${user.id}`) : null)
+                      return profileImg ? (
+                        <img src={profileImg} alt={user?.name || 'User'} className="h-6 w-6 rounded-full object-cover" />
+                      ) : (
+                        <FaUserCircle className="h-6 w-6" />
+                      )
+                    })()}
                     <FaChevronDown className={`h-3 w-3 transition-transform duration-200 ${showAccountMenu ? 'rotate-180' : ''}`} />
                   </button>
 
@@ -443,8 +458,15 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                       {/* User Info Section */}
                       <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20">
                         <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center flex-shrink-0">
-                            <FaUserCircle className="text-white text-xl" />
+                          <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
+                            {(() => {
+                              const profileImg = user?.profileImage || (user?.id ? localStorage.getItem(`profile-image-${user.id}`) : null)
+                              return profileImg ? (
+                                <img src={profileImg} alt={user?.name || 'User'} className="w-full h-full object-cover" />
+                              ) : (
+                                <FaUserCircle className="text-white text-xl" />
+                              )
+                            })()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-bold text-gray-900 dark:text-white truncate">
@@ -453,6 +475,11 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                             <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                               {user?.email || 'No email'}
                             </p>
+                            {user?.department && (
+                              <p className="text-xs text-gray-500 dark:text-gray-500 truncate mt-0.5">
+                                {user.department}
+                              </p>
+                            )}
                             <div className="mt-1">
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 capitalize">
                                 {role}
@@ -518,21 +545,8 @@ export default function Layout({ children, onLogout }: LayoutProps) {
                         </div>
                       </div>
 
-                      {/* Settings and Logout */}
+                      {/* Logout */}
                       <div className="py-2 border-t border-gray-200 dark:border-gray-700">
-                        <button
-                          onClick={() => {
-                            setShowPasswordModal(true)
-                            setShowAccountMenu(false)
-                          }}
-                          className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors flex items-center gap-3"
-                        >
-                          <FaCog className="text-gray-500 dark:text-gray-400" />
-                          <span>Settings</span>
-                        </button>
-                        
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
                         <button
                           onClick={() => {
                             handleLogout()

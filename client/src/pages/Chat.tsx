@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
-import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus, FaTimes } from 'react-icons/fa'
+import { FaPaperPlane, FaUser, FaComments, FaUsers, FaLock, FaUnlock, FaSearch, FaPlus, FaTimes, FaFileAlt, FaSpinner, FaTrash, FaLightbulb } from 'react-icons/fa'
 import { getJSON, setJSON, uuid, nowISO } from '../data/storage'
 import { CHAT_MESSAGES_KEY, ROOMS_KEY, ADMIN_USERS_KEY } from '../data/keys'
 import { Room, ChatMessage, DirectChat, AdminUserMock } from '../types/models'
@@ -45,12 +45,13 @@ const Chat = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [dmSearchQuery, setDmSearchQuery] = useState('')
-  const [messageSearchQuery, setMessageSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<ChatMessage[]>([])
-  const [showSearchResults, setShowSearchResults] = useState(false)
   const [rooms, setRooms] = useState<Room[]>([])
   const [allUsers, setAllUsers] = useState<any[]>([])
   const { users: realtimeUsers } = useRealtimeUsers()
+  const [showSummary, setShowSummary] = useState(false)
+  const [conversationSummary, setConversationSummary] = useState('')
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false)
+  const [showAIActions, setShowAIActions] = useState(false)
 
   // Subscribe to rooms in real-time with localStorage fallback
   useEffect(() => {
@@ -377,23 +378,6 @@ const Chat = () => {
     }
   }, [selectedChat, user?.id])
 
-  // Message search functionality
-  useEffect(() => {
-    if (!messageSearchQuery.trim() || !selectedChat) {
-      setSearchResults([])
-      setShowSearchResults(false)
-      return
-    }
-
-    const query = messageSearchQuery.toLowerCase()
-    const results = messages.filter(msg => 
-      msg.message.toLowerCase().includes(query) ||
-      msg.sender.toLowerCase().includes(query)
-    )
-    
-    setSearchResults(results)
-    setShowSearchResults(results.length > 0)
-  }, [messageSearchQuery, messages, selectedChat])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -744,151 +728,190 @@ const Chat = () => {
           <div className="flex-1 flex flex-col">
             {selectedChat ? (
               <>
-                {/* Chat Header */}
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center gap-3 mb-3">
-                    {selectedChat.type === 'room' ? (
-                      <FaUsers className="text-blue-600 dark:text-blue-400" />
-                    ) : (
-                      <div className="w-10 h-10 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
+                {/* Chat Header - Green Bar */}
+                <div className="bg-green-600 dark:bg-green-700 px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-green-500 dark:bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+                      {selectedChat.type === 'room' ? (
+                        <FaUsers className="text-white text-sm" />
+                      ) : (
                         <FaUser className="text-white text-sm" />
-                      </div>
-                    )}
-                    <h2 className="text-lg font-bold text-gray-900 dark:text-white">
-                      {selectedChat.name}
-                    </h2>
-                  </div>
-                  
-                  {/* Message Search */}
-                  <div className="relative">
-                    <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" />
-                    <input
-                      type="text"
-                      value={messageSearchQuery}
-                      onChange={(e) => setMessageSearchQuery(e.target.value)}
-                      placeholder="Search messages..."
-                      className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
-                    />
-                    {messageSearchQuery && (
-                      <button
-                        onClick={() => {
-                          setMessageSearchQuery('')
-                          setShowSearchResults(false)
-                        }}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                      >
-                        <FaTimes className="text-xs" />
-                      </button>
-                    )}
-                  </div>
-                  
-                  {showSearchResults && (
-                    <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                      Found {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+                      )}
                     </div>
-                  )}
+                    <div>
+                      <h2 className="text-base font-semibold text-white">
+                        {selectedChat.name}
+                      </h2>
+                      <p className="text-xs text-white/90">Online</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (selectedChat.type === 'direct' && selectedChat.id && user?.id) {
+                        try {
+                          const token = getToken() || 'mock-token-for-testing'
+                          const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+                          await axios.delete(`${API_URL}/chat/direct/${selectedChat.id}`, {
+                            headers: { Authorization: `Bearer ${token}` }
+                          })
+                          // Clear selected chat
+                          setSelectedChat(null)
+                          // Refresh messages
+                          setRefreshKey(prev => prev + 1)
+                        } catch (error) {
+                          console.error('Error deleting chat:', error)
+                        }
+                      }
+                    }}
+                    className="text-white hover:text-white/80 transition-colors p-2"
+                    aria-label="Delete chat"
+                  >
+                    <FaTrash className="text-sm" />
+                  </button>
                 </div>
 
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {/* Messages - Clean White Background */}
+                <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-4">
                   {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                      <FaComments className="text-4xl mb-3 opacity-50" />
-                      <p>No messages yet. Start the conversation!</p>
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-500">
+                      <FaComments className="text-4xl mb-3 opacity-30" />
+                      <p className="text-sm">No messages yet. Start the conversation!</p>
                     </div>
                   ) : (
-                    messages.map((msg) => {
-                      const isSearchMatch = messageSearchQuery.trim() && (
-                        msg.message.toLowerCase().includes(messageSearchQuery.toLowerCase()) ||
-                        msg.sender.toLowerCase().includes(messageSearchQuery.toLowerCase())
-                      )
-                      
-                      // Ensure isOwn is correctly set based on current user
-                      const isOwn = user?.id ? (msg.senderId === user.id || msg.isOwn === true) : (msg.isOwn === true)
-                      const initials = getInitials(msg.sender || 'User')
-                      
-                      return (
-                        <div
-                          key={msg.id}
-                          className={`flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'} ${
-                            isSearchMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-2 -m-2' : ''
-                          }`}
-                        >
-                          {/* For other users: Avatar on the LEFT */}
-                          {!isOwn && (
-                            <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
-                              <span className="text-white text-xs font-semibold">{initials}</span>
-                            </div>
-                          )}
-                          
-                          {/* Message Container */}
-                          <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                            {/* Sender name and time - show for all messages */}
-                            <div className={`flex items-center gap-2 mb-1 px-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
-                              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{msg.sender}</span>
-                              <span className="text-[10px] text-gray-500 dark:text-gray-500">{formatTime(msg.timestamp)}</span>
-                            </div>
-                            
+                    <div className="space-y-3">
+                      {messages.map((msg) => {
+                        // Ensure isOwn is correctly set based on current user
+                        const isOwn = user?.id ? (msg.senderId === user.id || msg.isOwn === true) : (msg.isOwn === true)
+                        
+                        return (
+                          <div
+                            key={msg.id}
+                            className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                          >
                             {/* Message Bubble */}
-                            <div
-                              className={`px-4 py-2.5 rounded-2xl ${
-                                isOwn
-                                  ? 'bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-500 dark:to-green-500 text-white rounded-br-sm'
-                                  : 'bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-sm border border-gray-200 dark:border-gray-600'
-                              } shadow-sm`}
-                            >
-                              {messageSearchQuery.trim() ? (
-                                <span 
-                                  className="text-sm whitespace-pre-wrap break-words"
-                                  dangerouslySetInnerHTML={{
-                                    __html: msg.message.replace(
-                                      new RegExp(`(${messageSearchQuery})`, 'gi'),
-                                      '<mark class="bg-yellow-300 dark:bg-yellow-600">$1</mark>'
-                                    )
-                                  }} 
-                                />
-                              ) : (
+                            <div className={`max-w-[75%] ${isOwn ? 'flex flex-col items-end' : 'flex flex-col items-start'}`}>
+                              <div
+                                className={`px-4 py-2.5 rounded-2xl ${
+                                  isOwn
+                                    ? 'bg-green-500 text-white rounded-br-sm'
+                                    : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-bl-sm'
+                                }`}
+                              >
                                 <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
-                              )}
+                              </div>
+                              <div className={`flex items-center gap-1 mt-1 px-1 ${isOwn ? 'flex-row-reverse' : ''}`}>
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                  {formatTime(msg.timestamp)}
+                                </span>
+                                {isOwn && (
+                                  <span className="text-[10px] text-gray-400 dark:text-gray-500">✓✓</span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          
-                          {/* For own messages: Avatar on the RIGHT */}
-                          {isOwn && (
-                            <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-r from-blue-600 to-green-600 rounded-full flex items-center justify-center">
-                              <span className="text-white text-xs font-semibold">{initials}</span>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })
+                        )
+                      })}
+                    </div>
                   )}
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input Area */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          handleSendMessage()
+                {/* Conversation Summary */}
+                {showSummary && conversationSummary && (
+                  <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <FaFileAlt className="text-blue-600 dark:text-blue-400" />
+                        <h4 className="font-semibold text-gray-900 dark:text-white">Conversation Summary</h4>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShowSummary(false)
+                          setConversationSummary('')
+                        }}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      >
+                        <FaTimes />
+                      </button>
+                    </div>
+                    <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                      {conversationSummary}
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Actions Panel - Shown when lightbulb is clicked */}
+                {showAIActions && messages.length > 0 && (
+                  <div className="px-4 py-2 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+                    <button
+                      onClick={async () => {
+                        if (messages.length === 0) return
+                        setIsLoadingSummary(true)
+                        setShowAIActions(false) // Hide panel when summarizing
+                        try {
+                          const token = getToken() || 'mock-token-for-testing'
+                          const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
+                          const response = await axios.post(`${API_URL}/chat/summarize`, {
+                            messages: messages.map(m => ({
+                              sender: m.sender,
+                              message: m.message
+                            }))
+                          }, {
+                            headers: { Authorization: `Bearer ${token}` }
+                          })
+                          setConversationSummary(response.data.summary || '')
+                          setShowSummary(true)
+                        } catch (error) {
+                          console.error('Error summarizing conversation:', error)
+                          setConversationSummary('Failed to generate summary. Please try again.')
+                          setShowSummary(true)
+                        } finally {
+                          setIsLoadingSummary(false)
                         }
                       }}
-                      placeholder="Type a message..."
-                      className="flex-1 px-5 py-3.5 bg-white dark:bg-gray-700 border-2 border-blue-200/50 dark:border-blue-800/50 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm shadow-sm"
-                    />
-                    <button
-                      onClick={handleSendMessage}
-                      className="btn-primary"
+                      disabled={messages.length === 0 || isLoadingSummary}
+                      className="text-xs px-3 py-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
-                      <FaPaperPlane /> Send
+                      {isLoadingSummary ? <FaSpinner className="animate-spin text-xs" /> : <FaFileAlt className="text-xs" />}
+                      Summarize Conversation
                     </button>
                   </div>
+                )}
+
+                {/* Input Area - Light Gray Bar */}
+                <div className="bg-gray-100 dark:bg-gray-800 px-4 py-3 flex items-center gap-3">
+                  <button
+                    onClick={() => setShowAIActions(!showAIActions)}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                      showAIActions 
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' 
+                        : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    }`}
+                    aria-label="AI Actions"
+                    title="AI Features - Summarize conversations and files"
+                  >
+                    <FaLightbulb className="text-sm" />
+                  </button>
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        handleSendMessage()
+                      }
+                    }}
+                    placeholder="Type a message..."
+                    className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    className="w-10 h-10 bg-green-500 hover:bg-green-600 text-white rounded-full flex items-center justify-center transition-colors"
+                    aria-label="Send message"
+                  >
+                    <FaPaperPlane className="text-sm" />
+                  </button>
                 </div>
               </>
             ) : (

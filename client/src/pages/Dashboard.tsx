@@ -23,6 +23,7 @@ const Dashboard = () => {
   const navigate = useNavigate()
   const { role, user } = useUser()
   const [isLoading, setIsLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
   
   // Modal states
   const [expandedFileId, setExpandedFileId] = useState<string | null>(null)
@@ -38,21 +39,25 @@ const Dashboard = () => {
     return () => clearTimeout(timer)
   }, [])
 
-  // Listen for real-time screenshot attempts
+  // Listen for real-time screenshot attempts and events updates
   useEffect(() => {
     const handleScreenshotAttempt = () => {
       // Trigger refresh of security alerts
       setRefreshKey((prev: number) => prev + 1)
     }
 
+    const handleEventsUpdated = () => {
+      // Trigger refresh of upcoming meetings when events are updated
+      setRefreshKey((prev: number) => prev + 1)
+    }
+
     window.addEventListener('screenshot-attempt', handleScreenshotAttempt)
+    window.addEventListener('events-updated', handleEventsUpdated)
     return () => {
       window.removeEventListener('screenshot-attempt', handleScreenshotAttempt)
+      window.removeEventListener('events-updated', handleEventsUpdated)
     }
   }, [])
-
-  // State to trigger refresh
-  const [refreshKey, setRefreshKey] = useState(0)
 
   // Get rooms with last message and unread count
   // Only show rooms where the user is a member or is the owner

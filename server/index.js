@@ -16,6 +16,7 @@ import securityRoutes from './routes/security.js'
 import auditRoutes from './routes/audit.js'
 import dataRightsRoutes from './routes/dataRights.js'
 import aiRoutes from './routes/ai.js'
+import chatRoutes from './routes/chat.js'
 import { initializeSecurityMiddleware } from './middleware/security.js'
 
 dotenv.config()
@@ -34,7 +35,23 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+      // Allow all origins in development
+      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+        return callback(null, true)
+      }
+      // In production, check allowed origins
+      const allowed = [
+        process.env.CLIENT_URL || 'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:5173'
+      ]
+      if (!origin || allowed.includes(origin)) {
+        callback(null, true)
+      } else {
+        callback(new Error('Not allowed by CORS'))
+      }
+    },
     methods: ['GET', 'POST']
   }
 })
@@ -93,11 +110,19 @@ const limiter = rateLimit({
 app.use('/api/', limiter)
 
 // CORS with strict origins - More permissive in development
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [process.env.CLIENT_URL || 'http://localhost:3000']
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
+  process.env.CLIENT_URL || 'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:5173'
+]
 app.use(cors({
   origin: (origin, callback) => {
-    // In development, allow all origins
-    if (process.env.NODE_ENV === 'development') {
+    // In development, allow all origins (including no origin for same-origin requests)
+    if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+      console.log(`✅ CORS allowing origin: ${origin || 'no origin (same-origin)'}`)
       return callback(null, true)
     }
     // In production, check allowed origins
@@ -191,6 +216,7 @@ app.use('/api/share', shareRoutes)
 app.use('/api/security', securityRoutes)
 app.use('/api/audit', auditRoutes)
 app.use('/api/data-rights', dataRightsRoutes)
+app.use('/api/chat', chatRoutes)
 
 // Serve static files from React app in development (proxy to Vite dev server)
 if (process.env.NODE_ENV === 'development') {

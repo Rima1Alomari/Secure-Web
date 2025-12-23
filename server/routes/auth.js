@@ -164,6 +164,79 @@ router.get('/users', authenticate, async (req, res) => {
   }
 })
 
+// Update profile
+router.put('/profile', authenticate, async (req, res) => {
+  try {
+    const { name } = req.body
+
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' })
+    }
+
+    const user = await User.findById(req.user._id)
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    // Update only the name (email cannot be changed)
+    user.name = name.trim()
+    await user.save()
+
+    await logAuditEvent('profile_update', user._id.toString(), 'Profile updated successfully', {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.json({ 
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id.toString(),
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        role: user.role || 'user'
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Update security settings
+router.put('/security-settings', authenticate, async (req, res) => {
+  try {
+    const { emailNotifications, loginAlerts, twoFactorEnabled } = req.body
+
+    const user = await User.findById(req.user._id)
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    // Update security settings (you can store these in user model or separate collection)
+    // For now, we'll just log the update
+    await logAuditEvent('security_settings_update', user._id.toString(), 'Security settings updated', {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      settings: {
+        emailNotifications,
+        loginAlerts,
+        twoFactorEnabled
+      }
+    })
+
+    res.json({ 
+      message: 'Security settings updated successfully',
+      settings: {
+        emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
+        loginAlerts: loginAlerts !== undefined ? loginAlerts : true,
+        twoFactorEnabled: twoFactorEnabled !== undefined ? twoFactorEnabled : false
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 // Change password
 router.put('/change-password', authenticate, async (req, res) => {
   try {
@@ -200,6 +273,144 @@ router.put('/change-password', authenticate, async (req, res) => {
     })
 
     res.json({ message: 'Password changed successfully' })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Admin: Create user (admin only)
+router.post('/admin/users', authenticate, async (req, res) => {
+  try {
+    // Check if user is admin
+    const adminUser = await User.findById(req.user._id)
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' })
+    }
+
+    const { name, email, password, role } = req.body
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' })
+    }
+
+    // Validate role if provided
+    const validRoles = ['user', 'admin']
+    const userRole = role && validRoles.includes(role.toLowerCase()) ? role.toLowerCase() : 'user'
+
+    const existingUser = await User.findOne({ email })
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' })
+    }
+
+    const user = new User({ name, email, password, role: userRole })
+    await user.save()
+
+    await logAuditEvent('user_created', adminUser._id.toString(), `User ${name} created by admin`, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      createdUserId: user._id.toString()
+    })
+
+    res.json({
+      message: 'User created successfully',
+      user: {
+        id: user._id.toString(),
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        role: user.role || 'user'
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Admin: Update user (admin only)
+router.put('/admin/users/:id', authenticate, async (req, res) => {
+  try {
+    // Check if user is admin
+    const adminUser = await User.findById(req.user._id)
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' })
+    }
+
+    const { name, email, role } = req.body
+    const userId = req.params.id
+
+    const user = await User.findById(userId)
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    // Update fields
+    if (name) user.name = name.trim()
+    if (email) {
+      // Check if email is already taken by another user
+      const existingUser = await User.findOne({ email, _id: { $ne: userId } })
+      if (existingUser) {
+        return res.status(400).json({ error: 'Email is already taken by another user' })
+      }
+      user.email = email.trim()
+    }
+    if (role && ['user', 'admin'].includes(role.toLowerCase())) {
+      user.role = role.toLowerCase()
+    }
+
+    await user.save()
+
+    await logAuditEvent('user_updated', adminUser._id.toString(), `User ${user.name} updated by admin`, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      updatedUserId: user._id.toString()
+    })
+
+    res.json({
+      message: 'User updated successfully',
+      user: {
+        id: user._id.toString(),
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        role: user.role || 'user'
+      }
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Admin: Delete user (admin only)
+router.delete('/admin/users/:id', authenticate, async (req, res) => {
+  try {
+    // Check if user is admin
+    const adminUser = await User.findById(req.user._id)
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' })
+    }
+
+    const userId = req.params.id
+
+    // Prevent deleting yourself
+    if (userId === adminUser._id.toString()) {
+      return res.status(400).json({ error: 'You cannot delete your own account' })
+    }
+
+    const user = await User.findById(userId)
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    const userName = user.name
+    await User.findByIdAndDelete(userId)
+
+    await logAuditEvent('user_deleted', adminUser._id.toString(), `User ${userName} deleted by admin`, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      deletedUserId: userId
+    })
+
+    res.json({ message: 'User deleted successfully' })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

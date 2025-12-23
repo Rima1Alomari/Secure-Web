@@ -1,27 +1,110 @@
-import { useState } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { setToken } from '../utils/auth'
 import { useUser } from '../contexts/UserContext'
 import { FaShieldAlt, FaEnvelope, FaLock, FaSignInAlt, FaArrowRight, FaEye, FaEyeSlash } from 'react-icons/fa'
 
-const API_URL = import.meta.env.VITE_API_URL || '/api'
+const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
 
 interface LoginProps {
   onLogin: () => void
 }
 
+const LOGIN_FORM_STORAGE_KEY = 'login-form-draft'
+
 const Login = ({ onLogin }: LoginProps) => {
-  const [email, setEmail] = useState('')
+  // Load email from localStorage if available (for recovery after remount)
+  const [email, setEmail] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem(LOGIN_FORM_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return parsed.email || ''
+      }
+    } catch {
+      // Ignore errors
+    }
+    return ''
+  })
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { setUser } = useUser()
+  const formRef = useRef<HTMLFormElement>(null)
+  const emailInputRef = useRef<HTMLInputElement>(null)
+  const isMountedRef = useRef(true)
+  
+  // Save email to sessionStorage as user types (for recovery)
+  useEffect(() => {
+    if (email) {
+      try {
+        sessionStorage.setItem(LOGIN_FORM_STORAGE_KEY, JSON.stringify({ email }))
+      } catch {
+        // Ignore errors
+      }
+    } else {
+      try {
+        sessionStorage.removeItem(LOGIN_FORM_STORAGE_KEY)
+      } catch {
+        // Ignore errors
+      }
+    }
+  }, [email])
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Clean up on unmount
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+  
+  // Prevent form from resetting on accidental submissions
+  useEffect(() => {
+    const form = formRef.current
+    if (form) {
+      const handleReset = (e: Event) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+      form.addEventListener('reset', handleReset)
+      return () => {
+        form.removeEventListener('reset', handleReset)
+      }
+    }
+  }, [])
+
+  const handleEmailChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation()
+    const value = e.target.value
+    if (isMountedRef.current) {
+      setEmail(value)
+    }
+  }, [])
+
+  const handlePasswordChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation()
+    const value = e.target.value
+    if (isMountedRef.current) {
+      setPassword(value)
+    }
+  }, [])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation()
+    // Prevent form submission on Enter key unless it's the submit button
+    if (e.key === 'Enter' && e.target !== emailInputRef.current) {
+      // Allow Enter to work normally for password field
+      return
+    }
+  }, [])
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     setError('')
     setLoading(true)
 
@@ -63,6 +146,13 @@ const Login = ({ onLogin }: LoginProps) => {
             break
         }
         
+        // Clear draft email on successful login
+        try {
+          sessionStorage.removeItem(LOGIN_FORM_STORAGE_KEY)
+        } catch {
+          // Ignore errors
+        }
+        
         // Navigate to role-specific page
         navigate(redirectPath)
       } else {
@@ -89,7 +179,7 @@ const Login = ({ onLogin }: LoginProps) => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [email, password, navigate, setUser, onLogin])
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
@@ -126,7 +216,7 @@ const Login = ({ onLogin }: LoginProps) => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form ref={formRef} onSubmit={handleSubmit} className="space-y-6" noValidate>
             <div>
               <label htmlFor="email" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                 Email Address
@@ -136,11 +226,14 @@ const Login = ({ onLogin }: LoginProps) => {
                   <FaEnvelope className="text-gray-400 dark:text-gray-500" />
                 </div>
                 <input
+                  ref={emailInputRef}
                   id="email"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={handleEmailChange}
+                  onKeyDown={handleKeyDown}
                   required
+                  autoComplete="email"
                   className="w-full pl-12 pr-4 py-3.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition-all"
                   placeholder="you@example.com"
                 />
@@ -159,8 +252,10 @@ const Login = ({ onLogin }: LoginProps) => {
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={handlePasswordChange}
+                  onKeyDown={handleKeyDown}
                   required
+                  autoComplete="current-password"
                   className="w-full pl-12 pr-12 py-3.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition-all"
                   placeholder="••••••••"
                 />
