@@ -164,6 +164,55 @@ router.get('/users', authenticate, async (req, res) => {
   }
 })
 
+// Search users by email (for chat and other features)
+router.get('/users/search', authenticate, async (req, res) => {
+  try {
+    const { email, query } = req.query
+    const mongoose = await import('mongoose')
+    if (mongoose.default.connection.readyState !== 1) {
+      return res.json([]) // Return empty array if MongoDB not connected
+    }
+
+    let searchQuery = {}
+    
+    // If email is provided, search by exact email match
+    if (email) {
+      searchQuery = { email: { $regex: new RegExp(`^${email.trim()}$`, 'i') } }
+    } 
+    // If query is provided, search by email or name
+    else if (query) {
+      const searchTerm = query.trim()
+      // Escape special regex characters
+      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      searchQuery = {
+        $or: [
+          { email: { $regex: new RegExp(escapedTerm, 'i') } },
+          { name: { $regex: new RegExp(escapedTerm, 'i') } }
+        ]
+      }
+    } else {
+      return res.status(400).json({ error: 'Email or query parameter is required' })
+    }
+
+    const users = await User.find(searchQuery)
+      .select('name email _id role userId')
+      .limit(20)
+      .sort({ name: 1 })
+    
+    res.json(users.map(u => ({
+      id: u._id.toString(),
+      _id: u._id.toString(),
+      userId: u.userId,
+      name: u.name,
+      email: u.email,
+      role: u.role || 'user'
+    })))
+  } catch (error) {
+    console.error('Error searching users:', error)
+    res.status(500).json({ error: 'Failed to search users' })
+  }
+})
+
 // Update profile
 router.put('/profile', authenticate, async (req, res) => {
   try {

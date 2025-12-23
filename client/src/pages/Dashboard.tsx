@@ -393,21 +393,22 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* Security Alerts */}
-        <div className="mb-4">
-          <div className="card p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <FaShieldAlt className="text-slate-600 dark:text-slate-400 text-base" />
-                Security Alerts
-              </h2>
-              <button
-                onClick={() => navigate('/security')}
-                className="text-xs text-slate-700 dark:text-slate-300 hover:underline flex items-center gap-1"
-              >
-                View all <FaChevronRight className="text-[10px]" />
-              </button>
-            </div>
+        {/* Security Alerts - Admin Only */}
+        {role === 'admin' && (
+          <div className="mb-4">
+            <div className="card p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <FaShieldAlt className="text-slate-600 dark:text-slate-400 text-base" />
+                  Security Alerts
+                </h2>
+                <button
+                  onClick={() => navigate('/security')}
+                  className="text-xs text-slate-700 dark:text-slate-300 hover:underline flex items-center gap-1"
+                >
+                  View all <FaChevronRight className="text-[10px]" />
+                </button>
+              </div>
             
             {securityAlerts.length === 0 ? (
               <div className="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -477,6 +478,7 @@ const Dashboard = () => {
             )}
           </div>
         </div>
+        )}
 
         <div className="grid lg:grid-cols-2 gap-8">
           {/* My Rooms Section */}
