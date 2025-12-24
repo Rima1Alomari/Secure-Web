@@ -833,39 +833,39 @@ export default function SecurityCenter() {
               ) : (
                 <>
                   <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <table className="min-w-full border-collapse">
                       <thead className="bg-gray-100 dark:bg-gray-700">
                         <tr>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             Timestamp
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             User
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             Action
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             Resource
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             Classification
                           </th>
-                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider border-b-2 border-gray-300 dark:border-gray-600">
                             Status
                           </th>
                         </tr>
                       </thead>
-                      <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      <tbody className="bg-white dark:bg-gray-800">
                         {paginatedAuditLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
+                          <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
                               {formatDate(log.timestamp)}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
                               {log.userName}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-6 py-4 whitespace-nowrap border-r border-gray-200 dark:border-gray-700">
                               <div className="flex items-center gap-2">
                                 {getActionIcon(log.action)}
                                 <span className="text-sm text-gray-900 dark:text-white capitalize">
@@ -873,13 +873,13 @@ export default function SecurityCenter() {
                                 </span>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
                               <div>
                                 <div className="font-medium text-gray-900 dark:text-white">{log.resourceName}</div>
                                 <div className="text-xs text-gray-500 dark:text-gray-400 capitalize">{log.resourceType}</div>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-6 py-4 whitespace-nowrap border-r border-gray-200 dark:border-gray-700">
                               {log.classification ? (
                                 <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getClassificationColor(log.classification)}`}>
                                   {log.classification}

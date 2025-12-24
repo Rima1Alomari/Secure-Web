@@ -1058,7 +1058,7 @@ const Calendar = () => {
                   <thead>
                     <tr>
                       {weekDays.map(day => (
-                        <th key={day} className="p-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700" style={{ width: '14.28%' }}>
+                        <th key={day} className="p-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-400 dark:border-gray-500" style={{ width: '14.28%' }}>
                           {day}
                         </th>
                       ))}
@@ -1077,7 +1077,7 @@ const Calendar = () => {
                             <td
                               key={dayIndex}
                               onClick={() => date && !isDateDisabled(date) && handleDateClick(date)}
-                              className={`p-1.5 border border-gray-200 dark:border-gray-700 align-top relative overflow-hidden ${
+                              className={`p-1.5 border border-gray-400 dark:border-gray-500 align-top relative overflow-hidden ${
                                 isOutside ? 'opacity-50 bg-gray-50 dark:bg-gray-900/30' : ''
                               } ${
                                 date && !isOutside && isToday(date) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
@@ -1127,39 +1127,70 @@ const Calendar = () => {
                                 <div 
                                   className="absolute top-7 left-1 right-1 bottom-1 overflow-hidden pointer-events-none"
                                 >
-                                  <div className="grid grid-cols-3 gap-0.5 h-full">
-                                    {dayEvents.slice(0, 9).map((event) => {
-                                      const eventColor = (event as any).color || '#3B82F6'
-                                      const finished = isEventFinished(event)
-                                      // Truncate name to fit in small square (max 4-5 chars)
-                                      const shortName = event.title.length > 4 
-                                        ? event.title.substring(0, 4) + '...' 
-                                        : event.title
-                                      
-                                      return (
-                                        <div
-                                          key={event.id}
-                                          className={`aspect-square rounded flex items-center justify-center text-center p-0.5 ${
-                                            isOutside ? 'opacity-60' : ''
-                                          }`}
-                                          style={{
-                                            backgroundColor: `${eventColor}20`,
-                                            color: eventColor,
-                                            border: `1.5px solid ${getBorderColor(eventColor, isDark)}`,
-                                            textDecoration: finished ? 'line-through' : 'none',
-                                            opacity: finished ? (isOutside ? 0.4 : 0.6) : (isOutside ? 0.6 : 1),
-                                            fontSize: '9px',
-                                            fontWeight: '600',
-                                            minWidth: '0',
-                                            minHeight: '0'
-                                          }}
-                                          title={event.title}
-                                        >
-                                          <span className="truncate w-full leading-tight">{shortName}</span>
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
+                                  {(() => {
+                                    const eventCount = dayEvents.length
+                                    const maxEvents = 9
+                                    const eventsToShow = dayEvents.slice(0, maxEvents)
+                                    
+                                    // Determine grid columns and sizing based on event count
+                                    let gridCols = 3
+                                    let fontSize = '10px'
+                                    let padding = 'p-1'
+                                    let maxChars = 5
+                                    
+                                    if (eventCount <= 3) {
+                                      gridCols = 3
+                                      fontSize = '11px'
+                                      padding = 'p-1.5'
+                                      maxChars = 6
+                                    } else if (eventCount <= 6) {
+                                      gridCols = 3
+                                      fontSize = '9px'
+                                      padding = 'p-0.5'
+                                      maxChars = 4
+                                    } else {
+                                      gridCols = 3
+                                      fontSize = '8px'
+                                      padding = 'p-0.5'
+                                      maxChars = 3
+                                    }
+                                    
+                                    return (
+                                      <div className={`grid gap-0.5 h-full ${gridCols === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                        {eventsToShow.map((event) => {
+                                          const eventColor = (event as any).color || '#3B82F6'
+                                          const finished = isEventFinished(event)
+                                          // Truncate name based on available space
+                                          const shortName = event.title.length > maxChars 
+                                            ? event.title.substring(0, maxChars) + '...' 
+                                            : event.title
+                                          
+                                          return (
+                                            <div
+                                              key={event.id}
+                                              className={`aspect-square rounded flex items-center justify-center text-center ${padding} ${
+                                                isOutside ? 'opacity-60' : ''
+                                              }`}
+                                              style={{
+                                                backgroundColor: `${eventColor}20`,
+                                                color: eventColor,
+                                                border: `1.5px solid ${getBorderColor(eventColor, isDark)}`,
+                                                textDecoration: finished ? 'line-through' : 'none',
+                                                opacity: finished ? (isOutside ? 0.4 : 0.6) : (isOutside ? 0.6 : 1),
+                                                fontSize: fontSize,
+                                                fontWeight: '600',
+                                                minWidth: '0',
+                                                minHeight: '0'
+                                              }}
+                                              title={event.title}
+                                            >
+                                              <span className="truncate w-full leading-tight">{shortName}</span>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )
+                                  })()}
                                   {dayEvents.length > 9 && (
                                     <div className={`absolute bottom-0 left-0 right-0 text-center text-[9px] px-1 py-0.5 ${isOutside ? 'text-gray-400 dark:text-gray-600' : 'text-gray-500 dark:text-gray-500'}`} style={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', backdropFilter: 'blur(2px)' }}>
                                       +{dayEvents.length - 9} more
@@ -1182,14 +1213,14 @@ const Calendar = () => {
               <div className="overflow-x-auto">
                 <div className="min-w-full">
                   {/* Header with day names */}
-                  <div className="grid grid-cols-8 border-b-2 border-gray-300 dark:border-gray-600">
-                    <div className="p-3 border-r border-gray-200 dark:border-gray-700"></div>
+                  <div className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500">
+                    <div className="p-3 border-r border-gray-400 dark:border-gray-500"></div>
                     {weekDaysList.map((date, index) => (
                       <button
                         key={index}
                         onClick={() => handleDateClick(date)}
                         disabled={isDateDisabled(date)}
-                        className={`p-3 text-center border-r border-gray-200 dark:border-gray-700 transition-colors ${
+                        className={`p-3 text-center border-r border-gray-400 dark:border-gray-500 transition-colors ${
                           isDateDisabled(date)
                             ? 'bg-gray-100 dark:bg-gray-800/50 opacity-50 cursor-not-allowed'
                             : isToday(date)
@@ -1225,8 +1256,8 @@ const Calendar = () => {
                   </div>
                   
                   {/* All-day row */}
-                  <div className="grid grid-cols-8 border-b-2 border-gray-300 dark:border-gray-600">
-                    <div className="p-2 border-r border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 font-medium">
+                  <div className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500">
+                    <div className="p-2 border-r border-gray-400 dark:border-gray-500 text-xs text-gray-600 dark:text-gray-400 font-medium">
                       All-day
                     </div>
                     {weekDaysList.map((date, dayIndex) => {
@@ -1238,7 +1269,7 @@ const Calendar = () => {
                       return (
                         <div
                           key={dayIndex}
-                          className="relative border-r border-gray-200 dark:border-gray-700 p-1 min-h-[40px]"
+                          className="relative border-r border-gray-400 dark:border-gray-500 p-1 min-h-[40px]"
                         >
                           {allDayEvents.length > 0 && (
                             <div className="space-y-1">
@@ -1282,9 +1313,9 @@ const Calendar = () => {
                       const hourEnd = hour + 1
                       
                       return (
-                        <div key={hour} className="grid grid-cols-8 border-b border-gray-200 dark:border-gray-700" style={{ minHeight: '60px' }}>
+                        <div key={hour} className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500" style={{ minHeight: '60px' }}>
                           {/* Time label */}
-                          <div className="p-2 border-r border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 font-medium">
+                          <div className="p-2 border-r border-gray-400 dark:border-gray-500 text-xs text-gray-600 dark:text-gray-400 font-medium">
                             {hourStart.toString().padStart(2, '0')}:00
                           </div>
                           
@@ -1311,7 +1342,7 @@ const Calendar = () => {
                             return (
                               <div
                                 key={dayIndex}
-                                className="relative border-r border-gray-200 dark:border-gray-700 p-1"
+                                className="relative border-r border-gray-400 dark:border-gray-500 p-1"
                                 style={{ minHeight: '60px' }}
                               >
                                 {organizedEvents.map((event, eventIndex) => {
@@ -1396,7 +1427,7 @@ const Calendar = () => {
                     const organizedEvents = organizeOverlappingEvents(hourEvents)
                     
                     return (
-                      <div key={hour} className="flex gap-4 border-b border-gray-200 dark:border-gray-700 pb-2">
+                      <div key={hour} className="flex gap-4 border-b border-gray-400 dark:border-gray-500 pb-2">
                         <div className="w-16 text-sm text-gray-600 dark:text-gray-400 font-semibold">
                           {hour.toString().padStart(2, '0')}:00
                         </div>

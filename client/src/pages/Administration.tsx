@@ -30,8 +30,6 @@ const Administration = () => {
   const actionMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const [users, setUsers] = useState<AdminUserMock[]>([])
   const [showAddUserModal, setShowAddUserModal] = useState(false)
-  const [showEditUserModal, setShowEditUserModal] = useState(false)
-  const [editingUser, setEditingUser] = useState<AdminUserMock | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null)
   
   const [newUser, setNewUser] = useState({
@@ -209,73 +207,8 @@ const Administration = () => {
     }
   }
 
-  const handleEditUser = (user: AdminUserMock) => {
-    setEditingUser(user)
-    setNewUser({
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      status: user.status
-    })
-    setShowEditUserModal(true)
-  }
-
-  const handleUpdateUser = async () => {
-    if (!editingUser || !newUser.name.trim() || !newUser.email.trim()) {
-      setToast({ message: 'Please fill in all required fields', type: 'error' })
-      return
-    }
-
-    try {
-      const token = getToken()
-      const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
-      
-      // Update user via backend API
-      const response = await axios.put(
-        `${API_URL}/auth/admin/users/${editingUser.id}`,
-        {
-          name: newUser.name.trim(),
-          email: newUser.email.trim(),
-          role: newUser.role.toLowerCase()
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      )
-
-      if (response.data.user) {
-        setToast({ message: `User "${newUser.name}" updated successfully`, type: 'success' })
-        setShowEditUserModal(false)
-        setEditingUser(null)
-        setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
-        
-        // Refresh users list
-        const usersResponse = await axios.get(`${API_URL}/auth/users`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (usersResponse.data && usersResponse.data.length > 0) {
-          const mappedUsers: AdminUserMock[] = usersResponse.data.map((u: any) => ({
-            id: u.id || u._id,
-            userId: u.userId || u.id,
-            name: u.name || 'Unknown',
-            email: u.email || '',
-            role: u.role === 'admin' ? 'Admin' : 'User',
-            status: 'Active' as const,
-            createdAt: nowISO(),
-            isOnline: false
-          }))
-          setUsers(mappedUsers)
-        }
-      }
-    } catch (error: any) {
-      console.error('Error updating user:', error)
-      const errorMessage = error.response?.data?.error || 'Failed to update user. Please try again.'
-      setToast({ message: errorMessage, type: 'error' })
-    }
-  }
-
   const handleDeleteUser = async (user: AdminUserMock) => {
-    if (window.confirm(`Are you sure you want to delete "${user.name}"?`)) {
+    if (window.confirm(`Are you sure you want to remove "${user.name}"?`)) {
       try {
         const token = getToken()
         const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
@@ -288,7 +221,7 @@ const Administration = () => {
           }
         )
         
-        setToast({ message: `User "${user.name}" deleted`, type: 'info' })
+        setToast({ message: `User "${user.name}" removed successfully`, type: 'info' })
         
         // Refresh users list
         const usersResponse = await axios.get(`${API_URL}/auth/users`, {
@@ -311,7 +244,7 @@ const Administration = () => {
         }
       } catch (error: any) {
         console.error('Error deleting user:', error)
-        const errorMessage = error.response?.data?.error || 'Failed to delete user. Please try again.'
+        const errorMessage = error.response?.data?.error || 'Failed to remove user. Please try again.'
         setToast({ message: errorMessage, type: 'error' })
       }
     }
@@ -398,11 +331,11 @@ const Administration = () => {
 
                 {/* Table with horizontal scroll on small screens */}
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <table className="min-w-full border-collapse">
                     <thead className="bg-gray-50 dark:bg-gray-700">
                       <tr>
                         <th 
-                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border-b-2 border-gray-300 dark:border-gray-600"
                           onClick={() => handleSort('name')}
                         >
                           <div className="flex items-center gap-2">
@@ -411,7 +344,7 @@ const Administration = () => {
                           </div>
                         </th>
                         <th 
-                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border-b-2 border-gray-300 dark:border-gray-600"
                           onClick={() => handleSort('email')}
                         >
                           <div className="flex items-center gap-2">
@@ -420,7 +353,7 @@ const Administration = () => {
                           </div>
                         </th>
                         <th 
-                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border-b-2 border-gray-300 dark:border-gray-600"
                           onClick={() => handleSort('role')}
                         >
                           <div className="flex items-center gap-2">
@@ -429,7 +362,7 @@ const Administration = () => {
                           </div>
                         </th>
                         <th 
-                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                          className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border-b-2 border-gray-300 dark:border-gray-600"
                           onClick={() => handleSort('status')}
                         >
                           <div className="flex items-center gap-2">
@@ -437,24 +370,24 @@ const Administration = () => {
                             <SortIcon field="status" />
                           </div>
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase">
+                        <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-b-2 border-gray-300 dark:border-gray-600">
                           Actions
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
+                    <tbody className="bg-white dark:bg-gray-800">
                       {paginatedUsers.map((user) => (
-                        <tr key={user.id} className="hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors group">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                        <tr key={user.id} className="hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors group border-b border-gray-200 dark:border-gray-700">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
                             {user.name}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
                             {user.email}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
                             {user.role}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-6 py-4 whitespace-nowrap border-r border-gray-200 dark:border-gray-700">
                             <span
                               className={`px-2 py-1 text-xs rounded-full ${
                                 user.status === 'Active'
@@ -493,22 +426,12 @@ const Administration = () => {
                                   >
                                     <button
                                       onClick={() => {
-                                        handleEditUser(user)
-                                        setSelectedRowMenu(null)
-                                      }}
-                                      className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                    >
-                                      Edit User
-                                    </button>
-                                    <div className="border-t border-gray-200 dark:border-gray-700"></div>
-                                    <button
-                                      onClick={() => {
                                         handleDeleteUser(user)
                                         setSelectedRowMenu(null)
                                       }}
                                       className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                                     >
-                                      Delete User
+                                      Remove User
                                     </button>
                                   </div>
                                 </>
@@ -648,91 +571,6 @@ const Administration = () => {
                 className="btn-primary flex-1"
               >
                 Add User
-              </button>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Edit User Modal */}
-        <Modal
-          isOpen={showEditUserModal}
-          onClose={() => {
-            setShowEditUserModal(false)
-            setEditingUser(null)
-            setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
-          }}
-          title="Edit User"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={newUser.name}
-                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter user name"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Email *
-              </label>
-              <input
-                type="email"
-                value={newUser.email}
-                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter email address"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Role *
-              </label>
-              <select
-                value={newUser.role}
-                onChange={(e) => setNewUser({ ...newUser, role: e.target.value as AdminUserMock['role'] })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-              >
-                <option value="User">User</option>
-                <option value="Admin">Admin</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Status *
-              </label>
-              <select
-                value={newUser.status}
-                onChange={(e) => setNewUser({ ...newUser, status: e.target.value as AdminUserMock['status'] })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-              >
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-                <option value="Suspended">Suspended</option>
-              </select>
-            </div>
-            <div className="flex gap-3 pt-4">
-              <button
-                onClick={() => {
-                  setShowEditUserModal(false)
-                  setEditingUser(null)
-                  setNewUser({ name: '', email: '', role: 'User', status: 'Active' })
-                }}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUpdateUser}
-                className="btn-primary flex-1"
-              >
-                Update User
               </button>
             </div>
           </div>
