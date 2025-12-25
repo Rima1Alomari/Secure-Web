@@ -17,6 +17,7 @@ import auditRoutes from './routes/audit.js'
 import dataRightsRoutes from './routes/dataRights.js'
 import aiRoutes from './routes/ai.js'
 import chatRoutes from './routes/chat.js'
+import roomRoutes from './routes/rooms.js'
 import { initializeSecurityMiddleware } from './middleware/security.js'
 
 dotenv.config()
@@ -35,23 +36,7 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: (origin, callback) => {
-      // Allow all origins in development
-      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
-        return callback(null, true)
-      }
-      // In production, check allowed origins
-      const allowed = [
-        process.env.CLIENT_URL || 'http://localhost:3000',
-        'http://localhost:3001',
-        'http://localhost:5173'
-      ]
-      if (!origin || allowed.includes(origin)) {
-        callback(null, true)
-      } else {
-        callback(new Error('Not allowed by CORS'))
-      }
-    },
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST']
   }
 })
@@ -110,19 +95,11 @@ const limiter = rateLimit({
 app.use('/api/', limiter)
 
 // CORS with strict origins - More permissive in development
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-  process.env.CLIENT_URL || 'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:5173',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'http://127.0.0.1:5173'
-]
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [process.env.CLIENT_URL || 'http://localhost:3000']
 app.use(cors({
   origin: (origin, callback) => {
-    // In development, allow all origins (including no origin for same-origin requests)
-    if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
-      console.log(`✅ CORS allowing origin: ${origin || 'no origin (same-origin)'}`)
+    // In development, allow all origins
+    if (process.env.NODE_ENV === 'development') {
       return callback(null, true)
     }
     // In production, check allowed origins
@@ -143,7 +120,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // Add request logging for debugging
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/ai') || req.path.startsWith('/api/auth')) {
+  if (req.path.startsWith('/api/ai') || req.path.startsWith('/api/auth') || req.path.startsWith('/api/chat')) {
     console.log(`📥 ${req.method} ${req.path} from ${req.ip}`)
   }
   next()
@@ -172,11 +149,35 @@ if (process.env.NODE_ENV === 'development') {
   initializeSecurityMiddleware(app)
 }
 
-// MongoDB connection
+// MongoDB connection with better error handling
 mongoose
-  .connect(MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => console.error('MongoDB connection error:', err))
+  .connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+    socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+  })
+  .then(() => {
+    console.log('✅ MongoDB connected successfully')
+    console.log(`   Database: ${MONGODB_URI.split('/').pop()}`)
+  })
+  .catch((err) => {
+    console.error('❌ MongoDB connection error:', err.message)
+    console.error('   Please make sure MongoDB is running and accessible')
+    console.error('   Connection string:', MONGODB_URI)
+    // Don't exit - let the server start but log the error
+  })
+
+// Handle MongoDB connection events
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB error:', err)
+})
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected')
+})
+
+mongoose.connection.on('reconnected', () => {
+  console.log('✅ MongoDB reconnected')
+})
 
 // Socket.io authentication middleware
 io.use((socket, next) => {
@@ -217,6 +218,7 @@ app.use('/api/security', securityRoutes)
 app.use('/api/audit', auditRoutes)
 app.use('/api/data-rights', dataRightsRoutes)
 app.use('/api/chat', chatRoutes)
+app.use('/api/rooms', roomRoutes)
 
 // Serve static files from React app in development (proxy to Vite dev server)
 if (process.env.NODE_ENV === 'development') {

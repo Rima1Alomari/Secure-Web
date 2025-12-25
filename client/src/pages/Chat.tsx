@@ -95,8 +95,6 @@ const Chat = () => {
 
   // Get all users for search - fetch from backend API
   const [allUsers, setAllUsers] = useState<AdminUserMock[]>([])
-  const [searchedUsers, setSearchedUsers] = useState<AdminUserMock[]>([])
-  const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   
   useEffect(() => {
     const loadUsers = async () => {
@@ -130,53 +128,6 @@ const Chat = () => {
     
     loadUsers()
   }, [])
-
-  // Search users by email in real-time
-  useEffect(() => {
-    const searchUsersByEmail = async () => {
-      const query = dmSearchQuery.trim()
-      
-      // If query looks like an email (contains @) or is longer than 2 characters, search
-      if (query.length >= 2 && (query.includes('@') || query.length > 2)) {
-        setIsSearchingUsers(true)
-        try {
-          const token = getToken() || 'mock-token-for-testing'
-          const response = await axios.get(`${API_URL}/auth/users/search`, {
-            params: { query },
-            headers: { Authorization: `Bearer ${token}` }
-          })
-          
-          if (response.data && Array.isArray(response.data)) {
-            const mappedUsers: AdminUserMock[] = response.data.map((u: any) => ({
-              id: u.id || u._id,
-              name: u.name,
-              email: u.email,
-              role: u.role === 'admin' ? 'Admin' : u.role === 'security' ? 'Moderator' : 'User',
-              status: 'Active',
-              createdAt: u.createdAt || nowISO()
-            }))
-            setSearchedUsers(mappedUsers)
-            console.log(`Found ${mappedUsers.length} users for query: "${query}"`)
-          } else {
-            setSearchedUsers([])
-            console.log(`No users found for query: "${query}"`)
-          }
-        } catch (error: any) {
-          console.error('Error searching users:', error)
-          console.error('Error details:', error.response?.data || error.message)
-          setSearchedUsers([])
-        } finally {
-          setIsSearchingUsers(false)
-        }
-      } else {
-        setSearchedUsers([])
-      }
-    }
-
-    // Debounce the search
-    const timeoutId = setTimeout(searchUsersByEmail, 300)
-    return () => clearTimeout(timeoutId)
-  }, [dmSearchQuery])
 
   // Get room members when a room is selected
   const roomMembers = useMemo(() => {
@@ -252,19 +203,11 @@ const Chat = () => {
     
     // Get users who don't have existing direct chats
     const existingChatUserIds = new Set(directChats.map(chat => chat.userId))
-    
-    // If we have searched users (from API), use those; otherwise use allUsers
-    const usersToFilter = searchedUsers.length > 0 ? searchedUsers : allUsers
-    const availableUsers = usersToFilter.filter(u => 
+    const availableUsers = allUsers.filter(u => 
       u.id !== user?.id && !existingChatUserIds.has(u.id)
     )
     
-    // If searching with API results, return those directly
-    if (searchedUsers.length > 0) {
-      return availableUsers.slice(0, 10)
-    }
-    
-    // If searching locally, filter by query
+    // If searching, filter by query; otherwise show all available users
     if (query) {
       return availableUsers
         .filter(u => u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
@@ -273,7 +216,7 @@ const Chat = () => {
       // Show all available users (limit to 20 for performance)
       return availableUsers.slice(0, 20)
     }
-  }, [allUsers, searchedUsers, dmSearchQuery, directChats, user?.id])
+  }, [allUsers, dmSearchQuery, directChats, user?.id])
 
   const handleStartChat = (targetUserId: string, targetUserName: string) => {
     if (!user?.id) return
@@ -826,15 +769,12 @@ const Chat = () => {
               <div className="mb-2 px-2">
                 <div className="relative">
                   <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs" />
-                  {isSearchingUsers && (
-                    <FaSpinner className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs animate-spin" />
-                  )}
                   <input
                     type="text"
                     value={dmSearchQuery}
                     onChange={(e) => setDmSearchQuery(e.target.value)}
-                    placeholder="Search by name or email…"
-                    className="w-full pl-9 pr-9 py-2 bg-gray-100 dark:bg-gray-700 border-none rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:bg-white dark:focus:bg-gray-600 outline-none transition-all text-sm"
+                    placeholder="Search users…"
+                    className="w-full pl-9 pr-3 py-2 bg-gray-100 dark:bg-gray-700 border-none rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:bg-white dark:focus:bg-gray-600 outline-none transition-all text-sm"
                   />
                 </div>
               </div>
@@ -920,18 +860,9 @@ const Chat = () => {
                     ))}
                   </>
                 ) : filteredDirectChats.length === 0 ? (
-                  <div className="text-center py-3">
-                    <p className="text-xs text-gray-500 dark:text-gray-500">
-                      {dmSearchQuery.trim() 
-                        ? `No users found matching "${dmSearchQuery.trim()}"` 
-                        : 'No users available'}
-                    </p>
-                    {dmSearchQuery.trim() && dmSearchQuery.includes('@') && (
-                      <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-1">
-                        Make sure the user exists in the system
-                      </p>
-                    )}
-                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-500 text-center py-3">
+                    {dmSearchQuery.trim() ? 'No users found' : 'No users available'}
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -1254,7 +1185,6 @@ const Chat = () => {
                       />
                     </div>
                     <button
-                      type="button"
                       onClick={handleSendMessage}
                       disabled={!newMessage.trim()}
                       className="w-10 h-10 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
