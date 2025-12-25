@@ -216,7 +216,7 @@ html {
 
 /* Standard Card - Professional styling */
 .card {
-  @apply bg-gray-50 dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700 shadow-sm;
+  @apply bg-gray-100 dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700 shadow-sm;
 }
 
 .card-hover {

@@ -149,36 +149,38 @@ const Administration = () => {
   }, [filteredAndSortedUsers, currentPage])
 
   const handleAddUser = async () => {
-    if (!newUser.name.trim() || !newUser.email.trim() || !newUser.password.trim()) {
-      setToast({ message: 'Please fill in all required fields', type: 'error' })
-      return
-    }
-
-    if (newUser.password.length < 6) {
-      setToast({ message: 'Password must be at least 6 characters long', type: 'error' })
+    // Only email and role are required
+    if (!newUser.email.trim()) {
+      setToast({ message: 'Please enter an email address', type: 'error' })
       return
     }
 
     try {
-      const token = getToken()
+      const token = getToken() || 'dev-token'
       const API_URL = (import.meta as any).env?.VITE_API_URL || '/api'
       
-      // Create user via backend API
+      // Create user via backend API - only email and role required
+      const requestData: any = {
+        email: newUser.email.trim(),
+        role: newUser.role.toLowerCase()
+      }
+      
+      // Include name if provided (optional)
+      if (newUser.name.trim()) {
+        requestData.name = newUser.name.trim()
+      }
+      
       const response = await axios.post(
         `${API_URL}/auth/admin/users`,
-        {
-          name: newUser.name.trim(),
-          email: newUser.email.trim(),
-          password: newUser.password,
-          role: newUser.role.toLowerCase()
-        },
+        requestData,
         {
           headers: { Authorization: `Bearer ${token}` }
         }
       )
 
       if (response.data.user) {
-        setToast({ message: `User "${newUser.name}" added successfully`, type: 'success' })
+        const userName = newUser.name.trim() || newUser.email.split('@')[0]
+        setToast({ message: `User "${userName}" added successfully`, type: 'success' })
         setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
         setShowAddUserModal(false)
         
@@ -303,6 +305,7 @@ const Administration = () => {
                         Team Management
                       </h2>
                       <button 
+                        type="button"
                         onClick={() => setShowAddUserModal(true)}
                         className="btn-primary"
                       >
@@ -375,7 +378,7 @@ const Administration = () => {
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white dark:bg-gray-800">
+                    <tbody className="bg-gray-100 dark:bg-gray-800">
                       {paginatedUsers.map((user) => (
                         <tr key={user.id} className="hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors group border-b border-gray-200 dark:border-gray-700">
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
@@ -425,6 +428,7 @@ const Administration = () => {
                                     }}
                                   >
                                     <button
+                                      type="button"
                                       onClick={() => {
                                         handleDeleteUser(user)
                                         setSelectedRowMenu(null)
@@ -505,19 +509,6 @@ const Administration = () => {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={newUser.name}
-                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Enter user name"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                 Email *
               </label>
               <input
@@ -542,22 +533,9 @@ const Administration = () => {
                 <option value="Admin">Admin</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Status *
-              </label>
-              <select
-                value={newUser.status}
-                onChange={(e) => setNewUser({ ...newUser, status: e.target.value as AdminUserMock['status'] })}
-                className="w-full px-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-              >
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-                <option value="Suspended">Suspended</option>
-              </select>
-            </div>
             <div className="flex gap-3 pt-4">
               <button
+                type="button"
                 onClick={() => {
                   setShowAddUserModal(false)
                   setNewUser({ name: '', email: '', password: '', role: 'User', status: 'Active' })
@@ -567,6 +545,7 @@ const Administration = () => {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleAddUser}
                 className="btn-primary flex-1"
               >

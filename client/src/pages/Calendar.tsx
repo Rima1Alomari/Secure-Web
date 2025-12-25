@@ -176,13 +176,43 @@ const Calendar = () => {
     setShowNewDropdown(false)
     setIsDateLocked(false) // Allow date change when opened from +New button
     setShowCreateModal(true)
-    // Reset form
+  }
+
+  const handleTimeSlotClick = (date: Date, hour: number, isFirstHalf: boolean) => {
+    // Calculate the time slot
+    const fromHour = hour
+    const fromMin = isFirstHalf ? 0 : 30
+    let toHour = isFirstHalf ? hour : (hour + 1)
+    const toMin = isFirstHalf ? 30 : 0
+    
+    // Handle edge case: if clicking second half of hour 23, end time should be 24:00 (next day)
+    // But since we can't use 24:00 in time input, we'll use 23:59 instead
+    if (!isFirstHalf && hour === 23) {
+      toHour = 23
+      // Set to 23:59 instead of 00:00 to avoid validation issues
+    }
+    
+    // Format times as HH:MM
+    const fromTime = `${String(fromHour).padStart(2, '0')}:${String(fromMin).padStart(2, '0')}`
+    let toTime = `${String(toHour).padStart(2, '0')}:${String(toMin).padStart(2, '0')}`
+    
+    // Special case: if second half of hour 23, set end time to 23:59
+    if (!isFirstHalf && hour === 23) {
+      toTime = '23:59'
+    }
+    
+    // Set the event type and date
+    setEventType('event')
+    setIsDateLocked(true) // Lock the date since user clicked on a specific day
+    setShowCreateModal(true)
+    
+    // Set the new event with the clicked time slot
     setNewEvent({
       title: '',
       description: '',
-      date: formatDateLocal(new Date()),
-      from: '09:00',
-      to: '10:00',
+      date: formatDateLocal(date),
+      from: fromTime,
+      to: toTime,
       location: '',
       showAs: 'busy',
       sharedWith: [],
@@ -197,8 +227,13 @@ const Calendar = () => {
   }
 
   const handleSaveEvent = () => {
-    if (!newEvent.title.trim() || !newEvent.from || !newEvent.to) {
-      setToast({ message: 'Please fill in all required fields', type: 'error' })
+    // More specific validation messages
+    if (!newEvent.title.trim()) {
+      setToast({ message: 'Please enter a title for the event', type: 'error' })
+      return
+    }
+    if (!newEvent.from || !newEvent.to) {
+      setToast({ message: 'Please select both start and end times', type: 'error' })
       return
     }
 
@@ -719,6 +754,14 @@ const Calendar = () => {
     setJSON(EVENTS_KEY, updatedEvents)
   }
 
+  // Helper to format 24-hour time to 12-hour AM/PM format
+  const format12Hour = (hour24: number): string => {
+    if (hour24 === 0) return '12 AM'
+    if (hour24 === 12) return '12 PM'
+    if (hour24 < 12) return `${hour24} AM`
+    return `${hour24 - 12} PM`
+  }
+
   // Helper to get softer border color for light theme
   const getBorderColor = (color: string, isDark: boolean): string => {
     if (isDark) return color
@@ -1084,9 +1127,11 @@ const Calendar = () => {
                               } ${
                                 date && selectedDate.getTime() === date.getTime() ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''
                               } ${
-                                date && isDateDisabled(date) && !isOutside ? 'bg-gray-100 dark:bg-gray-800/50 cursor-not-allowed' : ''
+                                date && isPastDate(date) && !isOutside ? 'bg-gray-200 dark:bg-gray-800/70' : ''
                               } ${
-                                date && !isDateDisabled(date) && !isOutside ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50' : ''
+                                date && isDateDisabled(date) && !isOutside && !isPastDate(date) ? 'bg-gray-100 dark:bg-gray-800/50 cursor-not-allowed' : ''
+                              } ${
+                                date && !isDateDisabled(date) && !isOutside && !isPastDate(date) ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50' : ''
                               }`}
                               style={{ height: '120px', width: '14.28%', verticalAlign: 'top' }}
                               title={
@@ -1109,15 +1154,17 @@ const Calendar = () => {
                                   )}
                                   <div
                                     className={`absolute top-1 left-1.5 text-left z-10 pointer-events-none ${
-                                      isDateDisabled(date)
+                                      isPastDate(date) && !isOutside
+                                        ? 'text-gray-500 dark:text-gray-500 font-semibold'
+                                        : isDateDisabled(date)
                                         ? 'text-gray-400 dark:text-gray-600 opacity-50'
                                         : isToday(date) && !isOutside
                                         ? 'font-bold text-blue-600 dark:text-blue-400'
                                         : isOutside
                                         ? 'text-gray-500 dark:text-gray-500'
-                                        : 'text-gray-900 dark:text-white'
+                                        : 'text-gray-900 dark:text-white font-semibold'
                                     }`}
-                                    style={{ fontSize: '14px' }}
+                                    style={{ fontSize: '16px', fontWeight: '600' }}
                                   >
                                     {date.getDate()}
                                   </div>
@@ -1210,10 +1257,10 @@ const Calendar = () => {
 
             {/* Week View */}
             {viewMode === 'week' && (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
                 <div className="min-w-full">
-                  {/* Header with day names */}
-                  <div className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500">
+                  {/* Header with day names - Sticky */}
+                  <div className="sticky top-0 z-20 bg-white dark:bg-gray-800 grid border-b-2 border-gray-400 dark:border-gray-500 shadow-md" style={{ gridTemplateColumns: '80px repeat(7, 1fr)' }}>
                     <div className="p-3 border-r border-gray-400 dark:border-gray-500"></div>
                     {weekDaysList.map((date, index) => (
                       <button
@@ -1255,68 +1302,18 @@ const Calendar = () => {
                     ))}
                   </div>
                   
-                  {/* All-day row */}
-                  <div className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500">
-                    <div className="p-2 border-r border-gray-400 dark:border-gray-500 text-xs text-gray-600 dark:text-gray-400 font-medium">
-                      All-day
-                    </div>
-                    {weekDaysList.map((date, dayIndex) => {
-                      const allDayEvents = getEventsForDate(date).filter(event => {
-                        const fromTime = event.from || event.time.split(' - ')[0] || '00:00'
-                        return fromTime === '00:00' || !event.from
-                      })
-                      
-                      return (
-                        <div
-                          key={dayIndex}
-                          className="relative border-r border-gray-400 dark:border-gray-500 p-1 min-h-[40px]"
-                        >
-                          {allDayEvents.length > 0 && (
-                            <div className="space-y-1">
-                              {allDayEvents.map(event => {
-                                const eventColor = (event as any).color || '#3B82F6'
-                                const finished = isEventFinished(event)
-                                return (
-                                  <button
-                                    key={event.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleEventClick(event)
-                                    }}
-                                    className="w-full rounded text-left p-1.5 hover:opacity-90 transition-opacity"
-                                    style={{
-                                      backgroundColor: `${eventColor}15`,
-                                      color: eventColor,
-                                      borderLeft: `3px solid ${getBorderColor(eventColor, isDark)}`,
-                                      textDecoration: finished ? 'line-through' : 'none',
-                                      opacity: finished ? 0.6 : 1,
-                                      fontSize: '11px',
-                                      fontWeight: '500'
-                                    }}
-                                  >
-                                    {event.title}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                  
                   {/* Time slots */}
                   <div className="relative">
-                    {Array.from({ length: 16 }).map((_, hourIndex) => {
-                      const hour = hourIndex + 9 // Start from 9 AM (09:00)
+                    {Array.from({ length: 24 }).map((_, hourIndex) => {
+                      const hour = hourIndex // Start from 0 (12 AM) to 23 (11 PM)
                       const hourStart = hour
                       const hourEnd = hour + 1
                       
                       return (
-                        <div key={hour} className="grid grid-cols-8 border-b border-gray-400 dark:border-gray-500" style={{ minHeight: '60px' }}>
+                        <div key={hour} className="grid border-b-2 border-gray-400 dark:border-gray-500 bg-gray-50 dark:bg-gray-800/30" style={{ gridTemplateColumns: '80px repeat(7, 1fr)', minHeight: '80px' }}>
                           {/* Time label */}
-                          <div className="p-2 border-r border-gray-400 dark:border-gray-500 text-xs text-gray-600 dark:text-gray-400 font-medium">
-                            {hourStart.toString().padStart(2, '0')}:00
+                          <div className="p-2 border-r-2 border-gray-400 dark:border-gray-500 text-xs text-gray-700 dark:text-gray-300 font-semibold bg-gray-100 dark:bg-gray-800">
+                            {format12Hour(hourStart)}
                           </div>
                           
                           {/* Day columns */}
@@ -1342,9 +1339,37 @@ const Calendar = () => {
                             return (
                               <div
                                 key={dayIndex}
-                                className="relative border-r border-gray-400 dark:border-gray-500 p-1"
-                                style={{ minHeight: '60px' }}
+                                className="relative border-r-2 border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-800"
+                                style={{ minHeight: '80px' }}
                               >
+                                {/* First half (00-30) - clickable */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleTimeSlotClick(date, hour, true)
+                                  }}
+                                  className="absolute left-0 right-0 top-0 h-1/2 opacity-0 hover:opacity-10 hover:bg-blue-400 dark:hover:bg-blue-500 transition-all cursor-pointer z-10"
+                                  title={`Click to add event from ${String(hour).padStart(2, '0')}:00 to ${String(hour).padStart(2, '0')}:30`}
+                                />
+                                
+                                {/* Second half (30-00) - clickable */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleTimeSlotClick(date, hour, false)
+                                  }}
+                                  className="absolute left-0 right-0 bottom-0 h-1/2 opacity-0 hover:opacity-10 hover:bg-blue-400 dark:hover:bg-blue-500 transition-all cursor-pointer z-10"
+                                  title={`Click to add event from ${String(hour).padStart(2, '0')}:30 to ${String(hour === 23 ? 0 : hour + 1).padStart(2, '0')}:00`}
+                                />
+                                
+                                {/* 30-minute divider line - visible */}
+                                <div
+                                  className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-300 dark:bg-gray-600 opacity-30 pointer-events-none z-0"
+                                  style={{ transform: 'translateY(-50%)' }}
+                                />
+                                
+                                {/* Content area with padding */}
+                                <div className="p-2 relative z-0">
                                 {organizedEvents.map((event, eventIndex) => {
                                   const eventColor = (event as any).color || '#3B82F6'
                                   const finished = isEventFinished(event)
@@ -1395,6 +1420,7 @@ const Calendar = () => {
                                     </button>
                                   )
                                 })}
+                                </div>
                               </div>
                             )
                           })}
@@ -1427,11 +1453,38 @@ const Calendar = () => {
                     const organizedEvents = organizeOverlappingEvents(hourEvents)
                     
                     return (
-                      <div key={hour} className="flex gap-4 border-b border-gray-400 dark:border-gray-500 pb-2">
-                        <div className="w-16 text-sm text-gray-600 dark:text-gray-400 font-semibold">
-                          {hour.toString().padStart(2, '0')}:00
+                      <div key={hour} className="flex gap-4 border-b-2 border-gray-400 dark:border-gray-500 pb-4 pt-4 bg-gray-50 dark:bg-gray-800/30 rounded-lg px-3" style={{ minHeight: '80px' }}>
+                        <div className="w-20 text-sm text-gray-700 dark:text-gray-300 font-semibold bg-gray-100 dark:bg-gray-800 px-3 py-2 rounded">
+                          {format12Hour(hour)}
                         </div>
                         <div className="flex-1 relative">
+                          {/* First half (00-30) - clickable */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleTimeSlotClick(selectedDate, hour, true)
+                            }}
+                            className="absolute left-0 right-0 top-0 h-1/2 opacity-0 hover:opacity-10 hover:bg-blue-400 dark:hover:bg-blue-500 transition-all cursor-pointer z-10 rounded"
+                            title={`Click to add event from ${String(hour).padStart(2, '0')}:00 to ${String(hour).padStart(2, '0')}:30`}
+                          />
+                          
+                          {/* Second half (30-00) - clickable */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleTimeSlotClick(selectedDate, hour, false)
+                            }}
+                            className="absolute left-0 right-0 bottom-0 h-1/2 opacity-0 hover:opacity-10 hover:bg-blue-400 dark:hover:bg-blue-500 transition-all cursor-pointer z-10 rounded"
+                            title={`Click to add event from ${String(hour).padStart(2, '0')}:30 to ${String(hour === 23 ? 0 : hour + 1).padStart(2, '0')}:00`}
+                          />
+                          
+                          {/* 30-minute divider line - visible */}
+                          <div
+                            className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-300 dark:bg-gray-600 opacity-30 pointer-events-none z-0"
+                            style={{ transform: 'translateY(-50%)' }}
+                          />
+                          
+                          <div className="relative z-0">
                           {organizedEvents.map(event => {
                             const eventColor = (event as any).color || '#3B82F6'
                             const finished = isEventFinished(event)
@@ -1459,6 +1512,7 @@ const Calendar = () => {
                               </button>
                             )
                           })}
+                          </div>
                         </div>
                       </div>
                     )
@@ -2023,10 +2077,12 @@ const Calendar = () => {
                     if (selectedEvent) setSelectedEvent(null)
                   }}
                   className="btn-secondary flex-1"
+                  type="button"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={selectedEvent ? handleUpdateEvent : handleSaveEvent}
                   className="btn-primary flex-1"
                 >

@@ -1078,12 +1078,14 @@ const FileManager = () => {
             </div>
             <div className="flex gap-3 pt-4">
               <button
+                type="button"
                 onClick={handleClassificationCancel}
                 className="btn-secondary flex-1"
               >
                 {fileUploadQueue.length > 0 ? 'Skip' : 'Cancel'}
               </button>
               <button
+                type="button"
                 onClick={handleClassificationConfirm}
                 className="btn-primary flex-1"
               >

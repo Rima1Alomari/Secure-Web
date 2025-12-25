@@ -11,6 +11,7 @@ import {
   FaCog,
   FaUsers,
   FaUserShield,
+  FaShieldAlt,
   FaChevronLeft,
   FaChevronRight,
   FaMoon,
@@ -168,6 +169,7 @@ export default function Layout({ children, onLogout }: LayoutProps) {
     { path: '/recent', icon: FaClock, label: 'Recent', roles: ['user', 'admin'] as UserRole[] },
     { path: '/trash', icon: FaTrash, label: 'Trash', roles: ['admin'] as UserRole[] },
     { path: '/administration', icon: FaUserShield, label: 'Admin', roles: ['admin'] as UserRole[] },
+    { path: '/security', icon: FaShieldAlt, label: 'Security', roles: ['admin'] as UserRole[] },
     { path: '/profile', icon: FaUser, label: 'Profile', roles: ['user', 'admin'] as UserRole[] },
   ]
 
@@ -188,13 +190,13 @@ export default function Layout({ children, onLogout }: LayoutProps) {
             <img 
               src="/Saudi-Aramco.CloseTab.png" 
               alt="Aramco Logo" 
-              className="w-12 h-12 object-contain"
+              className="w-10 h-10 object-contain"
             />
           ) : (
             <img 
               src={isDark ? '/aramco-digital.L.BT.PNG' : '/aramco-digital.L.WT.png'} 
               alt="Aramco Digital Logo" 
-              className={`w-full object-contain ${isDark ? 'h-20' : 'h-[70px]'}`}
+              className={`w-full object-contain ${isDark ? 'h-14' : 'h-12'}`}
             />
           )}
         </div>

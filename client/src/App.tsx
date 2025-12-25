@@ -14,6 +14,7 @@ import Calendar from './pages/Calendar'
 import Recent from './pages/Recent'
 import TrashBin from './pages/TrashBin'
 import Administration from './pages/Administration'
+import SecurityCenter from './pages/SecurityCenter'
 import AboutUs from './pages/AboutUs'
 import Profile from './pages/Profile'
 import Layout from './components/Layout'
@@ -160,6 +161,16 @@ function App() {
                     element={
                       <ProtectedRoute allowedRoles={['admin']}>
                         <Administration />
+                      </ProtectedRoute>
+                    } 
+                  />
+                  
+                  {/* Security Center (admin only) */}
+                  <Route 
+                    path="/security" 
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <SecurityCenter />
                       </ProtectedRoute>
                     } 
                   />

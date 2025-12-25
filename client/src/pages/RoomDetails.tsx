@@ -511,36 +511,48 @@ const RoomDetails = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between mb-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('chat')}
+              className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+                activeTab === 'chat'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('files')}
+              className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+                activeTab === 'files'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              Files
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('meetings')}
+              className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+                activeTab === 'meetings'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              Meetings/Schedule
+            </button>
+          </div>
           <button
-            onClick={() => setActiveTab('chat')}
-            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'chat'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            }`}
+            type="button"
+            onClick={() => setShowManageMembersModal(true)}
+            className="btn-primary flex items-center gap-2"
           >
-            Chat
-          </button>
-          <button
-            onClick={() => setActiveTab('files')}
-            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'files'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            }`}
-          >
-            Files
-          </button>
-          <button
-            onClick={() => setActiveTab('meetings')}
-            className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
-              activeTab === 'meetings'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            }`}
-          >
-            Meetings/Schedule
+            <FaUsers /> Members
           </button>
         </div>
 
@@ -616,6 +628,7 @@ const RoomDetails = () => {
                     className="flex-1 px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-full text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                   />
                   <button
+                    type="button"
                     onClick={handleSendMessage}
                     className="flex-shrink-0 w-10 h-10 bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white rounded-full flex items-center justify-center transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={!newMessage.trim()}
@@ -1018,6 +1031,221 @@ const RoomDetails = () => {
                 Save Settings
               </button>
             </div>
+          </div>
+        </Modal>
+
+        {/* Manage Members Modal */}
+        <Modal
+          isOpen={showManageMembersModal}
+          onClose={() => {
+            setShowManageMembersModal(false)
+            setMemberSearchQuery('')
+            setSelectedMemberMenu(null)
+          }}
+          title="Room Members"
+        >
+          <div className="space-y-4">
+            {/* Members List */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Members ({memberIds.length})
+              </label>
+              <div className="space-y-3 max-h-60 overflow-y-auto">
+                {memberIds.length === 0 ? (
+                  <p className="text-sm text-gray-600 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    No members added yet. Add members below.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {memberIds.map((memberId) => {
+                      const member = allUsers.find(u => u.id === memberId)
+                      return (
+                        <div
+                          key={memberId}
+                          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0">
+                              {member ? getInitials(member.name) : '?'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-gray-900 dark:text-white font-medium">
+                                {member ? member.name : memberId}
+                              </p>
+                              {member && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  {member.email}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          {isAdmin && (
+                            <div 
+                              ref={(el) => {
+                                if (el) memberMenuRefs.current[memberId] = el
+                              }}
+                              className="relative"
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedMemberMenu(selectedMemberMenu === memberId ? null : memberId)
+                                }}
+                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                              >
+                                <FaEllipsisV />
+                              </button>
+                              {selectedMemberMenu === memberId && (
+                                <>
+                                  <div 
+                                    className="fixed inset-0 z-10" 
+                                    onClick={() => setSelectedMemberMenu(null)}
+                                  ></div>
+                                  <div 
+                                    className="fixed bg-white dark:bg-gray-800 rounded-lg shadow-xl border-2 border-gray-200 dark:border-gray-700 z-20 w-48"
+                                    style={{
+                                      top: `${memberMenuRefs.current[memberId]?.getBoundingClientRect().bottom || 0}px`,
+                                      right: `${window.innerWidth - (memberMenuRefs.current[memberId]?.getBoundingClientRect().right || 0)}px`
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updated = memberIds.filter(id => id !== memberId)
+                                        setMemberIds(updated)
+                                        setSelectedMemberMenu(null)
+                                      }}
+                                      className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                    >
+                                      Remove Member
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Add Member Search - Only for admins */}
+            {isAdmin && (
+              <div 
+                ref={memberSearchRef}
+                className="relative"
+              >
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FaSearch className="text-gray-400 dark:text-gray-500" />
+                </div>
+                <input
+                  type="text"
+                  value={memberSearchQuery}
+                  onChange={(e) => setMemberSearchQuery(e.target.value)}
+                  placeholder="Search by name, email, or ID..."
+                  className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-sm"
+                />
+                
+                {/* Search Results Dropdown */}
+                {memberSearchQuery.trim() && (() => {
+                  const query = memberSearchQuery.toLowerCase()
+                  const filtered = allUsers.filter(u => 
+                    u.id !== user?.id && 
+                    !memberIds.includes(u.id) &&
+                    (
+                      u.name.toLowerCase().includes(query) || 
+                      u.email.toLowerCase().includes(query) ||
+                      (u.userId && u.userId.toLowerCase().includes(query))
+                    )
+                  ).slice(0, 10)
+                  
+                  return filtered.length > 0 ? (
+                    <div 
+                      className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-60 overflow-y-auto z-[100]"
+                      style={{
+                        top: `${memberSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                        left: `${memberSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                        width: `${memberSearchRef.current?.getBoundingClientRect().width || 0}px`
+                      }}
+                    >
+                      {filtered.map((user) => (
+                        <button
+                          key={user.id}
+                          type="button"
+                          onClick={() => {
+                            if (!memberIds.includes(user.id)) {
+                              setMemberIds([...memberIds, user.id])
+                              setMemberSearchQuery('')
+                            }
+                          }}
+                          className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700 last:border-b-0"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                            {getInitials(user.name)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-gray-900 dark:text-white truncate">
+                                {user.name}
+                              </p>
+                              {user.userId && (
+                                <span className="text-xs font-mono bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded flex-shrink-0">
+                                  {user.userId}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                              {user.email}
+                            </p>
+                          </div>
+                          <FaUserPlus className="text-green-600 dark:text-green-400 flex-shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : memberSearchQuery.trim() ? (
+                    <div 
+                      className="fixed bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 text-center text-sm text-gray-500 dark:text-gray-400 z-[100]"
+                      style={{
+                        top: `${memberSearchRef.current?.getBoundingClientRect().bottom || 0}px`,
+                        left: `${memberSearchRef.current?.getBoundingClientRect().left || 0}px`,
+                        width: `${memberSearchRef.current?.getBoundingClientRect().width || 0}px`
+                      }}
+                    >
+                      No users found
+                    </div>
+                  ) : null
+                })()}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setShowManageMembersModal(false)
+                setMemberSearchQuery('')
+                setSelectedMemberMenu(null)
+              }}
+              className="btn-secondary flex-1"
+            >
+              Close
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleUpdateSettings()
+                  setShowManageMembersModal(false)
+                }}
+                className="btn-primary flex-1"
+              >
+                Save Changes
+              </button>
+            )}
           </div>
         </Modal>
 

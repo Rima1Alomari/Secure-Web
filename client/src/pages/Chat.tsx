@@ -1254,6 +1254,7 @@ const Chat = () => {
                       />
                     </div>
                     <button
+                      type="button"
                       onClick={handleSendMessage}
                       disabled={!newMessage.trim()}
                       className="w-10 h-10 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 text-white rounded-full flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md"

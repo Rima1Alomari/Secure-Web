@@ -856,7 +856,7 @@ export default function SecurityCenter() {
                           </th>
                         </tr>
                       </thead>
-                      <tbody className="bg-white dark:bg-gray-800">
+                      <tbody className="bg-gray-100 dark:bg-gray-800">
                         {paginatedAuditLogs.map((log) => (
                           <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700">
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-gray-700">
